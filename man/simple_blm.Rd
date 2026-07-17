@@ -4,7 +4,14 @@
 \alias{simple_blm}
 \title{Bayesian simple linear regression}
 \usage{
-simple_blm(y, x, prior_var, residual_var)
+simple_blm(
+  y,
+  x,
+  prior_var,
+  residual_var = NULL,
+  residual_shape = NULL,
+  residual_scale = NULL
+)
 }
 \arguments{
 \item{y}{A numeric vector containing the response values.}
@@ -15,20 +22,46 @@ simple_blm(y, x, prior_var, residual_var)
 regression coefficient.}
 
 \item{residual_var}{A positive numeric scalar giving the known residual
-variance.}
+variance, or \code{NULL} to learn it from the data.}
+
+\item{residual_shape}{A positive numeric scalar giving the shape of the
+inverse-gamma prior for the residual variance. Required when
+\code{residual_var = NULL}.}
+
+\item{residual_scale}{A positive numeric scalar giving the scale of the
+inverse-gamma prior for the residual variance. Required when
+\code{residual_var = NULL}. The inverse-gamma density is proportional to
+\eqn{v^{-a-1} \exp(-b/v)}, where \eqn{a} is \code{residual_shape} and \eqn{b} is
+\code{residual_scale}.}
 }
 \value{
-A named list with \code{posterior_mean} and \code{posterior_var}, the mean and
-variance of the normal posterior distribution of the regression coefficient.
+When \code{residual_var} is known, a named list with \code{posterior_mean} and
+\code{posterior_var} for the normal posterior distribution of the slope. When
+the residual variance is learned, the list additionally contains
+\code{posterior_scale} and \code{posterior_df} for the marginal Student t
+posterior of the slope, and \code{residual_shape} and \code{residual_scale} for
+the inverse-gamma posterior of the residual variance.
 }
 \description{
 Computes the posterior distribution of the slope in a simple linear
-regression with known residual variance. The intercept is integrated out by
-centering both the predictor and response. The slope has a normal prior with
-mean zero and variance \code{prior_var}.
+regression. The intercept is integrated out by centering both the predictor
+and response. The residual variance can either be fixed or learned using a
+conjugate inverse-gamma prior.
+}
+\details{
+When the residual variance is learned, the conjugate prior is
+\eqn{\beta \mid \sigma^2 \sim N(0, \sigma^2 V_0)}, where \eqn{V_0} is
+\code{prior_var}, and \eqn{\sigma^2 \sim IG(a, b)}. Thus, in this case,
+\code{prior_var} is the slope's variance relative to the residual variance.
 }
 \examples{
 x <- 1:5
 y <- 1 + 2 * x
 simple_blm(y, x, prior_var = 10, residual_var = 1)
+simple_blm(
+  y, x,
+  prior_var = 10,
+  residual_shape = 2,
+  residual_scale = 1
+)
 }
