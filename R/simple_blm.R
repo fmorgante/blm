@@ -2,8 +2,8 @@
 #'
 #' Computes the posterior distribution of the slope in a simple linear
 #' regression. The intercept is integrated out by centering both the predictor
-#' and response. The residual variance can either be fixed or learned using a
-#' conjugate inverse-gamma prior.
+#' and response. The residual variance can either be fixed or learned using an
+#' inverse-gamma prior and Gibbs sampling.
 #'
 #' @param y A numeric vector containing the response values.
 #' @param x A numeric vector containing the predictor values.
@@ -19,18 +19,24 @@
 #'   `residual_var = NULL`. The inverse-gamma density is proportional to
 #'   \eqn{v^{-a-1} \exp(-b/v)}, where \eqn{a} is `residual_shape` and \eqn{b} is
 #'   `residual_scale`.
+#' @param iterations A positive integer giving the total number of Gibbs
+#'   iterations when the residual variance is learned.
+#' @param burnin A non-negative integer giving the number of initial Gibbs
+#'   iterations to discard.
+#' @param thin A positive integer giving the interval between retained draws.
+#' @param seed `NULL` or an integer used to initialize the random-number
+#'   generator.
 #'
 #' @return A named list containing `slope_mean`, `slope_var`,
 #'   `intercept_mean`, and `intercept_var`. When the residual variance is
-#'   learned, the list additionally contains `slope_scale`, `slope_df`,
-#'   `intercept_scale`, and `intercept_df` for the marginal Student t
-#'   posteriors, plus `residual_var_shape` and `residual_var_scale` for the
-#'   inverse-gamma posterior of the residual variance.
+#'   learned, the list additionally contains `residual_var_mean`,
+#'   `residual_var_var`, `slope_samples`, `intercept_samples`, and
+#'   `residual_var_samples`.
 #'
-#' @details When the residual variance is learned, the conjugate prior is
-#'   \eqn{\beta \mid \sigma^2 \sim N(0, \sigma^2 V_0)}, where \eqn{V_0} is
-#'   `prior_var`, and \eqn{\sigma^2 \sim IG(a, b)}. Thus, in this case,
-#'   `prior_var` is the slope's variance relative to the residual variance.
+#' @details The slope and residual variance priors are independent. The slope
+#'   has a zero-mean normal prior with variance `prior_var`, and the residual
+#'   variance has an inverse-gamma prior. Posterior summaries are computed from
+#'   retained Gibbs draws when the residual variance is learned.
 #' @export
 #'
 #' @examples
@@ -41,10 +47,13 @@
 #'   y, x,
 #'   prior_var = 10,
 #'   residual_shape = 2,
-#'   residual_scale = 1
+#'   residual_scale = 1,
+#'   seed = 123
 #' )
 simple_blm <- function(y, x, prior_var, residual_var = NULL,
-                       residual_shape = NULL, residual_scale = NULL) {
+                       residual_shape = NULL, residual_scale = NULL,
+                       iterations = 4000L, burnin = 1000L, thin = 1L,
+                       seed = NULL) {
   if (!is.numeric(y) || !is.atomic(y) || is.object(y) || !is.null(dim(y))) {
     stop("`y` must be a numeric vector.", call. = FALSE)
   }
@@ -103,49 +112,28 @@ simple_blm <- function(y, x, prior_var, residual_var = NULL,
   .validate_variance(residual_shape, "residual_shape")
   .validate_variance(residual_scale, "residual_scale")
 
-  # Normal-inverse-gamma update. Centering removes one residual degree of
-  # freedom because the intercept has been integrated out.
-  posterior_relative_var <- 1 / (sum(x_centered^2) + 1 / prior_var)
-  posterior_mean <- posterior_relative_var * sum(x_centered * y_centered)
-  posterior_residual_shape <- residual_shape + (length(y) - 1) / 2
-  posterior_residual_scale <- residual_scale + 0.5 * (
-    sum((y_centered - posterior_mean * x_centered)^2) +
-      posterior_mean^2 / prior_var
+  samples <- .blm_gibbs(
+    y = y,
+    x = matrix(x, ncol = 1L, dimnames = list(NULL, "x")),
+    prior_var = prior_var,
+    residual_shape = residual_shape,
+    residual_scale = residual_scale,
+    iterations = iterations,
+    burnin = burnin,
+    thin = thin,
+    seed = seed
   )
-  posterior_scale <- sqrt(
-    posterior_residual_scale / posterior_residual_shape *
-      posterior_relative_var
-  )
-  intercept_mean <- y_mean - posterior_mean * x_mean
-  intercept_relative_var <- 1 / length(y) +
-    x_mean^2 * posterior_relative_var
-  intercept_scale <- sqrt(
-    posterior_residual_scale / posterior_residual_shape *
-      intercept_relative_var
-  )
-  posterior_var <- if (posterior_residual_shape > 1) {
-    posterior_residual_scale / (posterior_residual_shape - 1) *
-      posterior_relative_var
-  } else {
-    Inf
-  }
-  intercept_var <- if (posterior_residual_shape > 1) {
-    posterior_residual_scale / (posterior_residual_shape - 1) *
-      intercept_relative_var
-  } else {
-    Inf
-  }
+  slope_samples <- drop(samples$coefficient_samples)
 
   list(
-    slope_mean = posterior_mean,
-    slope_var = posterior_var,
-    slope_scale = posterior_scale,
-    slope_df = 2 * posterior_residual_shape,
-    intercept_mean = intercept_mean,
-    intercept_var = intercept_var,
-    intercept_scale = intercept_scale,
-    intercept_df = 2 * posterior_residual_shape,
-    residual_var_shape = posterior_residual_shape,
-    residual_var_scale = posterior_residual_scale
+    slope_mean = mean(slope_samples),
+    slope_var = var(slope_samples),
+    intercept_mean = mean(samples$intercept_samples),
+    intercept_var = var(samples$intercept_samples),
+    residual_var_mean = mean(samples$residual_var_samples),
+    residual_var_var = var(samples$residual_var_samples),
+    slope_samples = slope_samples,
+    intercept_samples = samples$intercept_samples,
+    residual_var_samples = samples$residual_var_samples
   )
 }

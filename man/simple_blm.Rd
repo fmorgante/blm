@@ -10,7 +10,11 @@ simple_blm(
   prior_var,
   residual_var = NULL,
   residual_shape = NULL,
-  residual_scale = NULL
+  residual_scale = NULL,
+  iterations = 4000L,
+  burnin = 1000L,
+  thin = 1L,
+  seed = NULL
 )
 }
 \arguments{
@@ -33,26 +37,36 @@ inverse-gamma prior for the residual variance. Required when
 \code{residual_var = NULL}. The inverse-gamma density is proportional to
 \eqn{v^{-a-1} \exp(-b/v)}, where \eqn{a} is \code{residual_shape} and \eqn{b} is
 \code{residual_scale}.}
+
+\item{iterations}{A positive integer giving the total number of Gibbs
+iterations when the residual variance is learned.}
+
+\item{burnin}{A non-negative integer giving the number of initial Gibbs
+iterations to discard.}
+
+\item{thin}{A positive integer giving the interval between retained draws.}
+
+\item{seed}{\code{NULL} or an integer used to initialize the random-number
+generator.}
 }
 \value{
 A named list containing \code{slope_mean}, \code{slope_var},
 \code{intercept_mean}, and \code{intercept_var}. When the residual variance is
-learned, the list additionally contains \code{slope_scale}, \code{slope_df},
-\code{intercept_scale}, and \code{intercept_df} for the marginal Student t
-posteriors, plus \code{residual_var_shape} and \code{residual_var_scale} for
-the inverse-gamma posterior of the residual variance.
+learned, the list additionally contains \code{residual_var_mean},
+\code{residual_var_var}, \code{slope_samples}, \code{intercept_samples}, and
+\code{residual_var_samples}.
 }
 \description{
 Computes the posterior distribution of the slope in a simple linear
 regression. The intercept is integrated out by centering both the predictor
-and response. The residual variance can either be fixed or learned using a
-conjugate inverse-gamma prior.
+and response. The residual variance can either be fixed or learned using an
+inverse-gamma prior and Gibbs sampling.
 }
 \details{
-When the residual variance is learned, the conjugate prior is
-\eqn{\beta \mid \sigma^2 \sim N(0, \sigma^2 V_0)}, where \eqn{V_0} is
-\code{prior_var}, and \eqn{\sigma^2 \sim IG(a, b)}. Thus, in this case,
-\code{prior_var} is the slope's variance relative to the residual variance.
+The slope and residual variance priors are independent. The slope has a
+zero-mean normal prior with variance \code{prior_var}, and the residual
+variance has an inverse-gamma prior. Posterior summaries are computed from
+retained Gibbs draws when the residual variance is learned.
 }
 \examples{
 x <- 1:5
@@ -62,6 +76,7 @@ simple_blm(
   y, x,
   prior_var = 10,
   residual_shape = 2,
-  residual_scale = 1
+  residual_scale = 1,
+  seed = 123
 )
 }

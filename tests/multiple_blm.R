@@ -1,0 +1,112 @@
+library(blm)
+
+x <- cbind(
+  first = 1:5,
+  second = c(0, 1, 0, 1, 0)
+)
+y <- 1 + 2 * x[, "first"] - 3 * x[, "second"]
+
+known_fit <- multiple_blm(
+  y = y,
+  x = x,
+  prior_var = 10,
+  residual_var = 1
+)
+expected_cov <- diag(c(1 / 10.1, 1 / 1.3))
+dimnames(expected_cov) <- list(colnames(x), colnames(x))
+expected_mean <- c(first = 20 / 10.1, second = -3.6 / 1.3)
+expected_intercept <- mean(y) - sum(colMeans(x) * expected_mean)
+expected_intercept_var <- 1 / 5 +
+  drop(crossprod(colMeans(x), expected_cov %*% colMeans(x)))
+
+stopifnot(
+  identical(
+    names(known_fit),
+    c(
+      "coefficient_mean", "coefficient_cov",
+      "intercept_mean", "intercept_var"
+    )
+  ),
+  isTRUE(all.equal(known_fit$coefficient_mean, expected_mean)),
+  isTRUE(all.equal(known_fit$coefficient_cov, expected_cov)),
+  isTRUE(all.equal(known_fit$intercept_mean, expected_intercept)),
+  isTRUE(all.equal(known_fit$intercept_var, expected_intercept_var))
+)
+
+# A scalar prior variance and a repeated vector are equivalent.
+vector_prior_fit <- multiple_blm(y, x, c(10, 10), residual_var = 1)
+stopifnot(isTRUE(all.equal(known_fit, vector_prior_fit)))
+
+# Data-frame inputs retain their predictor names.
+data_frame_fit <- multiple_blm(y, as.data.frame(x), 10, residual_var = 1)
+stopifnot(isTRUE(all.equal(known_fit, data_frame_fit)))
+
+# With one predictor, multiple_blm agrees with simple_blm.
+simple_y <- 1 + 2 * x[, "first"]
+simple_fit <- simple_blm(simple_y, x[, "first"], 10, residual_var = 1)
+one_predictor_fit <- multiple_blm(
+  simple_y, x[, "first", drop = FALSE], 10, residual_var = 1
+)
+stopifnot(
+  isTRUE(all.equal(
+    unname(one_predictor_fit$coefficient_mean),
+    simple_fit$slope_mean
+  )),
+  isTRUE(all.equal(
+    drop(one_predictor_fit$coefficient_cov),
+    simple_fit$slope_var
+  )),
+  isTRUE(all.equal(one_predictor_fit$intercept_mean, simple_fit$intercept_mean)),
+  isTRUE(all.equal(one_predictor_fit$intercept_var, simple_fit$intercept_var))
+)
+
+learned_fit <- multiple_blm(
+  y = y,
+  x = x,
+  prior_var = 10,
+  residual_shape = 2,
+  residual_scale = 1
+)
+relative_cov <- expected_cov
+expected_shape <- 4
+expected_scale <- 1 + 0.5 * (
+  sum((y - mean(y) -
+    sweep(x, 2, colMeans(x), "-") %*% expected_mean)^2) +
+    sum(expected_mean^2 / 10)
+)
+stopifnot(
+  identical(
+    names(learned_fit),
+    c(
+      "coefficient_mean", "coefficient_cov", "coefficient_scale",
+      "coefficient_df", "intercept_mean", "intercept_var",
+      "intercept_scale", "intercept_df", "residual_var_shape",
+      "residual_var_scale"
+    )
+  ),
+  isTRUE(all.equal(learned_fit$coefficient_mean, expected_mean)),
+  isTRUE(all.equal(learned_fit$residual_var_shape, expected_shape)),
+  isTRUE(all.equal(learned_fit$residual_var_scale, expected_scale)),
+  isTRUE(all.equal(
+    learned_fit$coefficient_cov,
+    expected_scale / (expected_shape - 1) * relative_cov
+  )),
+  learned_fit$coefficient_df == 2 * expected_shape,
+  learned_fit$intercept_df == 2 * expected_shape
+)
+
+# Invalid designs, priors, and residual specifications are rejected.
+stopifnot(
+  inherits(try(multiple_blm(y, x[, 1], 10, 1), silent = TRUE), "try-error"),
+  inherits(try(multiple_blm(y[-1], x, 10, 1), silent = TRUE), "try-error"),
+  inherits(try(multiple_blm(y, x, c(10, 0), 1), silent = TRUE), "try-error"),
+  inherits(try(multiple_blm(y, x, c(10, 10, 10), 1), silent = TRUE), "try-error"),
+  inherits(try(multiple_blm(y, x, 10), silent = TRUE), "try-error"),
+  inherits(
+    try(
+      multiple_blm(y, x, 10, residual_var = 1, residual_shape = 2),
+      silent = TRUE
+    ),
+    "try-error"
+  )
+)
