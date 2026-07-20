@@ -46,6 +46,198 @@
   stats::setNames(as.numeric(local_shape), c("a", "b"))
 }
 
+.validate_pi <- function(pi) {
+  if (!is.numeric(pi) || !is.atomic(pi) || is.object(pi) ||
+      !is.null(dim(pi)) || length(pi) != 2L || anyNA(pi) ||
+      any(!is.finite(pi)) || any(pi <= 0)) {
+    stop(
+      "`pi` must contain two positive, finite numeric values.",
+      call. = FALSE
+    )
+  }
+  stats::setNames(as.numeric(pi), c("a", "b"))
+}
+
+.validate_eta_var <- function(value, number_of_predictors) {
+  if (length(value) == 1L) {
+    .validate_variance(value, "var")
+    return(rep(value, number_of_predictors))
+  }
+  if (!is.numeric(value) || !is.atomic(value) || is.object(value) ||
+      !is.null(dim(value)) || length(value) != number_of_predictors ||
+      anyNA(value) || any(!is.finite(value)) || any(value <= 0)) {
+    stop(
+      paste0(
+        "`var` must be a positive, finite numeric scalar or have one ",
+        "value per predictor."
+      ),
+      call. = FALSE
+    )
+  }
+  as.numeric(value)
+}
+
+.normalize_eta <- function(ETA, number_of_observations, residual_var) {
+  if (!is.list(ETA) || length(ETA) < 1L) {
+    stop("`ETA` must be a non-empty list.", call. = FALSE)
+  }
+  if (all(c("X", "model") %in% names(ETA))) {
+    ETA <- list(ETA1 = ETA)
+  }
+  if (!all(vapply(ETA, is.list, logical(1)))) {
+    stop(
+      paste0(
+        "`ETA` must be a predictor specification or a list of predictor ",
+        "specifications."
+      ),
+      call. = FALSE
+    )
+  }
+
+  block_names <- names(ETA)
+  if (is.null(block_names)) {
+    block_names <- paste0("ETA", seq_along(ETA))
+  } else {
+    missing_name <- is.na(block_names) | block_names == ""
+    block_names[missing_name] <- paste0("ETA", which(missing_name))
+    block_names <- make.unique(block_names)
+  }
+
+  blocks <- lapply(seq_along(ETA), function(block_index) {
+    specification <- ETA[[block_index]]
+    block_name <- block_names[block_index]
+    if (!all(c("X", "model") %in% names(specification))) {
+      stop(
+        sprintf("ETA block `%s` must contain `X` and `model`.", block_name),
+        call. = FALSE
+      )
+    }
+    if (!is.character(specification$model) ||
+        length(specification$model) != 1L || is.na(specification$model) ||
+        !specification$model %in% c("Normal", "SpikeSlab", "GlobalLocal")) {
+      stop(
+        sprintf(
+          paste0(
+            "ETA block `%s` has an invalid `model`; use `Normal`, ",
+            "`SpikeSlab`, or `GlobalLocal`."
+          ),
+          block_name
+        ),
+        call. = FALSE
+      )
+    }
+    model <- specification$model
+    allowed <- switch(
+      model,
+      Normal = c("X", "model", "standardize", "var"),
+      SpikeSlab = c("X", "model", "standardize", "var", "pi"),
+      GlobalLocal = c(
+        "X", "model", "standardize", "local_shape", "global_scale"
+      )
+    )
+    unknown <- setdiff(names(specification), allowed)
+    if (length(unknown) > 0L) {
+      stop(
+        sprintf(
+          "ETA block `%s` contains unsupported field(s): %s.",
+          block_name,
+          paste(unknown, collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
+    X <- .as_predictor_matrix(specification$X, number_of_observations)
+    standardize <- specification$standardize
+    if (is.null(standardize)) {
+      standardize <- TRUE
+    }
+    if (!is.logical(standardize) || length(standardize) != 1L ||
+        is.na(standardize)) {
+      stop(
+        sprintf("ETA block `%s`: `standardize` must be TRUE or FALSE.",
+                block_name),
+        call. = FALSE
+      )
+    }
+    x_centered <- sweep(X, 2L, colMeans(X), FUN = "-")
+    predictor_scale <- if (standardize) {
+      sqrt(colSums(x_centered^2) / (nrow(X) - 1))
+    } else {
+      rep(1, ncol(X))
+    }
+    if (any(!is.finite(predictor_scale)) || any(predictor_scale <= 0)) {
+      stop(
+        sprintf(
+          paste0(
+            "ETA block `%s` cannot contain constant predictors when ",
+            "`standardize = TRUE`."
+          ),
+          block_name
+        ),
+        call. = FALSE
+      )
+    }
+
+    coefficient_var <- rep(1, ncol(X))
+    pi_alpha <- pi_beta <- 1
+    local_shape <- c(a = 1, b = 0.5)
+    global_scale <- 1
+    if (model %in% c("Normal", "SpikeSlab")) {
+      if (is.null(specification$var)) {
+        stop(
+          sprintf("ETA block `%s` requires `var`.", block_name),
+          call. = FALSE
+        )
+      }
+      coefficient_var <- .validate_eta_var(specification$var, ncol(X))
+    }
+    if (model == "SpikeSlab") {
+      if (!is.null(residual_var)) {
+        stop(
+          "`SpikeSlab` ETA blocks require learning the residual variance.",
+          call. = FALSE
+        )
+      }
+      pi <- if (is.null(specification$pi)) {
+        c(a = 1, b = 1)
+      } else {
+        .validate_pi(specification$pi)
+      }
+      pi_alpha <- unname(pi["a"])
+      pi_beta <- unname(pi["b"])
+    }
+    if (model == "GlobalLocal") {
+      local_shape <- if (is.null(specification$local_shape)) {
+        c(a = 1, b = 0.5)
+      } else {
+        .validate_local_shape(specification$local_shape)
+      }
+      global_scale <- if (is.null(specification$global_scale)) 1 else
+        specification$global_scale
+      .validate_variance(global_scale, "global_scale")
+    }
+
+    list(
+      name = block_name,
+      model = model,
+      model_code = match(model, c("Normal", "SpikeSlab", "GlobalLocal")) - 1L,
+      X = X,
+      x = sweep(X, 2L, predictor_scale, FUN = "/"),
+      predictor_names = colnames(X),
+      predictor_scale = predictor_scale,
+      standardize = standardize,
+      var = coefficient_var,
+      pi_alpha = pi_alpha,
+      pi_beta = pi_beta,
+      local_shape = local_shape,
+      global_scale = global_scale
+    )
+  })
+  names(blocks) <- block_names
+  blocks
+}
+
 .draw_gig <- function(n, lambda, chi, psi) {
   values <- c(n = n, lambda = lambda, chi = chi, psi = psi)
   if (!is.numeric(values) || anyNA(values) || any(!is.finite(values)) ||
@@ -141,13 +333,17 @@
 .blm_gibbs <- function(y, x, prior_var, residual_shape, residual_scale,
                        iterations, burnin, thin, seed,
                        progress_callback = NULL,
-                       coefficient_prior = "normal",
+                       block_id = NULL, block_model = 0L,
                        pi_alpha = 1, pi_beta = 1,
                        global_scale = 1, residual_var = NULL,
-                       local_shape = c(a = 1, b = 0.5)) {
+                       local_a = 1, local_b = 0.5) {
   retained_iterations <- .validate_mcmc(iterations, burnin, thin, seed)
   number_of_predictors <- ncol(x)
   predictor_names <- colnames(x)
+  if (is.null(block_id)) {
+    block_id <- rep.int(1L, number_of_predictors)
+  }
+  number_of_blocks <- length(block_model)
 
   x_mean <- colMeans(x)
   y_mean <- mean(y)
@@ -164,33 +360,31 @@
   )
   intercept_samples <- numeric(number_of_draws)
   residual_var_samples <- numeric(number_of_draws)
-  use_spike_slab <- coefficient_prior == "spike_slab"
-  use_global_local <- coefficient_prior == "global_local"
-  if (use_spike_slab) {
+  has_spike_slab <- any(block_model == 1L)
+  has_global_local <- any(block_model == 2L)
+  if (has_spike_slab) {
     inclusion_samples <- matrix(
       NA_integer_,
       nrow = number_of_draws,
       ncol = number_of_predictors,
       dimnames = list(NULL, predictor_names)
     )
-    pi_samples <- numeric(number_of_draws)
+    pi_samples <- matrix(NA_real_, number_of_draws, number_of_blocks)
     inclusion <- rep.int(1L, number_of_predictors)
     pi <- pi_alpha / (pi_alpha + pi_beta)
   }
-  if (use_global_local) {
+  if (has_global_local) {
     local_var_samples <- matrix(
       NA_real_,
       nrow = number_of_draws,
       ncol = number_of_predictors,
       dimnames = list(NULL, predictor_names)
     )
-    tau_sq_samples <- numeric(number_of_draws)
+    tau_sq_samples <- matrix(NA_real_, number_of_draws, number_of_blocks)
     local_var <- rep(1, number_of_predictors)
     local_aux <- rep(1, number_of_predictors)
     tau_sq <- global_scale^2
-    global_aux <- 1
-    local_a <- local_shape[1L]
-    local_b <- local_shape[2L]
+    global_aux <- rep(1, number_of_blocks)
   }
 
   coefficient <- numeric(number_of_predictors)
@@ -214,10 +408,12 @@
 
   for (iteration in seq_len(iterations)) {
     for (predictor in seq_len(number_of_predictors)) {
+      block <- block_id[predictor]
+      model <- block_model[block]
       partial_residuals <- residuals +
         x_centered[, predictor] * coefficient[predictor]
-      prior_precision <- if (use_global_local) {
-        1 / tau_sq / local_var[predictor]
+      prior_precision <- if (model == 2L) {
+        1 / tau_sq[block] / local_var[predictor]
       } else {
         1 / prior_var[predictor]
       }
@@ -226,9 +422,9 @@
       )
       conditional_mean <- conditional_var *
         sum(x_centered[, predictor] * partial_residuals) / residual_var
-      if (use_spike_slab) {
+      if (model == 1L) {
         bounded_pi <- min(
-          max(pi, .Machine$double.eps),
+          max(pi[block], .Machine$double.eps),
           1 - .Machine$double.eps
         )
         log_inclusion_odds <- stats::qlogis(bounded_pi) +
@@ -240,7 +436,7 @@
           prob = stats::plogis(log_inclusion_odds)
         )
       }
-      if (!use_spike_slab || inclusion[predictor] == 1L) {
+      if (model != 1L || inclusion[predictor] == 1L) {
         coefficient[predictor] <- stats::rnorm(
           1L,
           mean = conditional_mean,
@@ -253,44 +449,55 @@
         x_centered[, predictor] * coefficient[predictor]
     }
 
-    if (use_spike_slab) {
-      number_included <- sum(inclusion)
-      pi <- stats::rbeta(
-        1L,
-        shape1 = pi_alpha + number_included,
-        shape2 = pi_beta + number_of_predictors - number_included
-      )
+    if (has_spike_slab) {
+      for (block in which(block_model == 1L)) {
+        predictors <- which(block_id == block)
+        number_included <- sum(inclusion[predictors])
+        pi[block] <- stats::rbeta(
+          1L,
+          shape1 = pi_alpha[block] + number_included,
+          shape2 = pi_beta[block] + length(predictors) - number_included
+        )
+      }
     }
 
-    if (use_global_local) {
-      gig_chi <- pmax(
-        coefficient^2 / tau_sq,
-        .Machine$double.xmin
-      )
-      local_var <- vapply(seq_len(number_of_predictors), function(predictor) {
-        .draw_gig(
-          n = 1L,
-          lambda = local_a - 0.5,
-          chi = gig_chi[predictor],
-          psi = 2 * local_aux[predictor]
+    if (has_global_local) {
+      for (block in which(block_model == 2L)) {
+        predictors <- which(block_id == block)
+        gig_chi <- pmax(
+          coefficient[predictors]^2 / tau_sq[block],
+          .Machine$double.xmin
         )
-      }, numeric(1))
-      local_aux <- stats::rgamma(
-        number_of_predictors,
-        shape = local_a + local_b,
-        rate = 1 + local_var
-      )
-      tau_sq <- 1 / stats::rgamma(
-        1L,
-        shape = (number_of_predictors + 1) / 2,
-        rate = 1 / global_aux +
-          sum(coefficient^2 / local_var) / 2
-      )
-      global_aux <- 1 / stats::rgamma(
-        1L,
-        shape = 1,
-        rate = 1 / global_scale^2 + 1 / tau_sq
-      )
+        local_var[predictors] <- vapply(
+          seq_along(predictors),
+          function(index) {
+            predictor <- predictors[index]
+            .draw_gig(
+              n = 1L,
+              lambda = local_a[block] - 0.5,
+              chi = gig_chi[index],
+              psi = 2 * local_aux[predictor]
+            )
+          },
+          numeric(1)
+        )
+        local_aux[predictors] <- stats::rgamma(
+          length(predictors),
+          shape = local_a[block] + local_b[block],
+          rate = 1 + local_var[predictors]
+        )
+        tau_sq[block] <- 1 / stats::rgamma(
+          1L,
+          shape = (length(predictors) + 1) / 2,
+          rate = 1 / global_aux[block] +
+            sum(coefficient[predictors]^2 / local_var[predictors]) / 2
+        )
+        global_aux[block] <- 1 / stats::rgamma(
+          1L,
+          shape = 1,
+          rate = 1 / global_scale[block]^2 + 1 / tau_sq[block]
+        )
+      }
     }
 
     if (learn_residual_var) {
@@ -312,13 +519,13 @@
         sd = sqrt(residual_var / length(y))
       )
       residual_var_samples[retained_index] <- residual_var
-      if (use_spike_slab) {
+      if (has_spike_slab) {
         inclusion_samples[retained_index, ] <- inclusion
-        pi_samples[retained_index] <- pi
+        pi_samples[retained_index, ] <- pi
       }
-      if (use_global_local) {
+      if (has_global_local) {
         local_var_samples[retained_index, ] <- local_var
-        tau_sq_samples[retained_index] <- tau_sq
+        tau_sq_samples[retained_index, ] <- tau_sq
       }
       retained_index <- retained_index + 1L
     }
@@ -339,11 +546,11 @@
     intercept_samples = intercept_samples,
     residual_var_samples = residual_var_samples
   )
-  if (use_spike_slab) {
+  if (has_spike_slab) {
     samples$inclusion_samples <- inclusion_samples
     samples$pi_samples <- pi_samples
   }
-  if (use_global_local) {
+  if (has_global_local) {
     samples$local_var_samples <- local_var_samples
     samples$tau_sq_samples <- tau_sq_samples
   }
@@ -353,11 +560,14 @@
 .blm_gibbs_rcpp <- function(y, x, prior_var, residual_shape, residual_scale,
                             iterations, burnin, thin, seed,
                             progress_callback = NULL,
-                            coefficient_prior = "normal",
+                            block_id = NULL, block_model = 0L,
                             pi_alpha = 1, pi_beta = 1,
                             global_scale = 1, residual_var = NULL,
-                            local_shape = c(a = 1, b = 0.5)) {
+                            local_a = 1, local_b = 0.5) {
   .validate_mcmc(iterations, burnin, thin, seed)
+  if (is.null(block_id)) {
+    block_id <- rep.int(1L, ncol(x))
+  }
   if (is.null(progress_callback)) {
     progress_callback <- function(amount, iteration) invisible(NULL)
   }
@@ -371,24 +581,24 @@
     burnin = burnin,
     thin = thin,
     progress_callback = progress_callback,
-    use_spike_slab = coefficient_prior == "spike_slab",
-    use_global_local = coefficient_prior == "global_local",
+    block_id = block_id,
+    block_model = block_model,
     pi_alpha = pi_alpha,
     pi_beta = pi_beta,
     global_scale = global_scale,
-    local_a = local_shape[1L],
-    local_b = local_shape[2L],
+    local_a = local_a,
+    local_b = local_b,
     learn_residual_var = is.null(residual_var),
     fixed_residual_var = if (is.null(residual_var)) 1 else residual_var
   )
   colnames(samples$coefficient_samples) <- colnames(x)
-  if (coefficient_prior == "spike_slab") {
+  if (any(block_model == 1L)) {
     colnames(samples$inclusion_samples) <- colnames(x)
   } else {
     samples$inclusion_samples <- NULL
     samples$pi_samples <- NULL
   }
-  if (coefficient_prior == "global_local") {
+  if (any(block_model == 2L)) {
     colnames(samples$local_var_samples) <- colnames(x)
   } else {
     samples$local_var_samples <- NULL
@@ -418,7 +628,7 @@
 }
 
 .run_blm_chains <- function(sampler_arguments, version, nchains, seed,
-                            coefficient_prior, progressor = NULL) {
+                            block_model, progressor = NULL) {
   if (nchains == 1L) {
     sampler <- if (version == "Rcpp") .blm_gibbs_rcpp else .blm_gibbs
     return(do.call(
@@ -471,16 +681,11 @@
   chain_samples <- lapply(chain_futures, future::value)
   .combine_blm_chains(
     chain_samples,
-    coefficient_prior = coefficient_prior
+    block_model = block_model
   )
 }
 
-.combine_blm_chains <- function(chain_samples,
-                                coefficient_prior = "normal",
-                                use_spike_slab = NULL) {
-  if (!is.null(use_spike_slab)) {
-    coefficient_prior <- if (use_spike_slab) "spike_slab" else "normal"
-  }
+.combine_blm_chains <- function(chain_samples, block_model = 0L) {
   number_of_draws <- vapply(
     chain_samples,
     function(samples) nrow(samples$coefficient_samples),
@@ -501,35 +706,31 @@
     ),
     chain_id = rep.int(seq_along(chain_samples), number_of_draws)
   )
-  if (coefficient_prior == "spike_slab") {
+  if (any(block_model == 1L)) {
     combined$inclusion_samples <- do.call(
       rbind,
       lapply(chain_samples, `[[`, "inclusion_samples")
     )
-    combined$pi_samples <- unlist(
-      lapply(chain_samples, `[[`, "pi_samples"),
-      use.names = FALSE
+    combined$pi_samples <- do.call(
+      rbind,
+      lapply(chain_samples, `[[`, "pi_samples")
     )
   }
-  if (coefficient_prior == "global_local") {
+  if (any(block_model == 2L)) {
     combined$local_var_samples <- do.call(
       rbind,
       lapply(chain_samples, `[[`, "local_var_samples")
     )
-    combined$tau_sq_samples <- unlist(
-      lapply(chain_samples, `[[`, "tau_sq_samples"),
-      use.names = FALSE
+    combined$tau_sq_samples <- do.call(
+      rbind,
+      lapply(chain_samples, `[[`, "tau_sq_samples")
     )
   }
   combined
 }
 
 .fit_sample_matrix <- function(fit) {
-  required <- c(
-    "coefficient_samples",
-    "intercept_samples",
-    "residual_var_samples"
-  )
+  required <- c("ETA", "intercept_samples", "residual_var_samples")
   if (!is.list(fit) || !all(required %in% names(fit))) {
     stop(
       "`fit` must be a sampled fit returned by `multiple_blm()`.",
@@ -537,8 +738,14 @@
     )
   }
 
-  coefficient_samples <- as.matrix(fit$coefficient_samples)
-  number_of_draws <- nrow(coefficient_samples)
+  if (!is.list(fit$ETA) || length(fit$ETA) < 1L ||
+      is.null(fit$ETA[[1L]]$coefficient_samples)) {
+    stop(
+      "`fit` must contain posterior samples from `multiple_blm()`.",
+      call. = FALSE
+    )
+  }
+  number_of_draws <- nrow(as.matrix(fit$ETA[[1L]]$coefficient_samples))
   if (length(fit$intercept_samples) != number_of_draws ||
       length(fit$residual_var_samples) != number_of_draws) {
     stop("`fit` contains sample components with incompatible lengths.",
@@ -550,11 +757,19 @@
     residual_var = fit$residual_var_samples
   )
 
-  if (!is.null(fit$pi_samples)) {
-    if (length(fit$pi_samples) != number_of_draws) {
-      stop("`fit` contains incompatible pi samples.", call. = FALSE)
+  for (block_name in names(fit$ETA)) {
+    block <- fit$ETA[[block_name]]
+    if (is.null(block$coefficient_samples) ||
+        nrow(as.matrix(block$coefficient_samples)) != number_of_draws) {
+      stop("`fit` contains incompatible ETA samples.", call. = FALSE)
     }
-    sample_matrix <- cbind(sample_matrix, pi = fit$pi_samples)
+    if (!is.null(block$pi_samples)) {
+      if (length(block$pi_samples) != number_of_draws) {
+        stop("`fit` contains incompatible pi samples.", call. = FALSE)
+      }
+      sample_matrix <- cbind(sample_matrix, block$pi_samples)
+      colnames(sample_matrix)[ncol(sample_matrix)] <- paste0("pi_", block_name)
+    }
   }
   sample_matrix
 }

@@ -64,19 +64,20 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     const int burnin,
     const int thin,
     const Rcpp::Function& progress_callback,
-    const bool use_spike_slab,
-    const bool use_global_local,
-    const double pi_alpha,
-    const double pi_beta,
-    const double global_scale,
-    const double local_a,
-    const double local_b,
+    const Rcpp::IntegerVector& block_id,
+    const Rcpp::IntegerVector& block_model,
+    const Rcpp::NumericVector& pi_alpha,
+    const Rcpp::NumericVector& pi_beta,
+    const Rcpp::NumericVector& global_scale,
+    const Rcpp::NumericVector& local_a,
+    const Rcpp::NumericVector& local_b,
     const bool learn_residual_var,
     const double fixed_residual_var) {
   Rcpp::RNGScope scope;
 
   const int n = y.size();
   const int p = X.ncol();
+  const int number_of_blocks = block_model.size();
   const int number_of_draws = (iterations - burnin - 1) / thin + 1;
 
   std::vector<double> x_mean(p, 0.0);
@@ -112,9 +113,9 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   Rcpp::NumericVector intercept_samples(number_of_draws);
   Rcpp::NumericVector residual_var_samples(number_of_draws);
   Rcpp::IntegerMatrix inclusion_samples(number_of_draws, p);
-  Rcpp::NumericVector pi_samples(number_of_draws);
+  Rcpp::NumericMatrix pi_samples(number_of_draws, number_of_blocks);
   Rcpp::NumericMatrix local_var_samples(number_of_draws, p);
-  Rcpp::NumericVector tau_sq_samples(number_of_draws);
+  Rcpp::NumericMatrix tau_sq_samples(number_of_draws, number_of_blocks);
   std::vector<double> coefficient(p, 0.0);
   std::vector<int> inclusion(p, 1);
   std::vector<double> local_var(p, 1.0);
@@ -127,9 +128,21 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   double residual_var = learn_residual_var
     ? residual_scale / (residual_shape + 1.0)
     : fixed_residual_var;
-  double pi = pi_alpha / (pi_alpha + pi_beta);
-  double tau_sq = global_scale * global_scale;
-  double global_aux = 1.0;
+  std::vector<double> pi(number_of_blocks, 0.5);
+  std::vector<double> tau_sq(number_of_blocks, 1.0);
+  std::vector<double> global_aux(number_of_blocks, 1.0);
+  bool has_spike_slab = false;
+  bool has_global_local = false;
+  for (int block = 0; block < number_of_blocks; ++block) {
+    if (block_model[block] == 1) {
+      has_spike_slab = true;
+      pi[block] = pi_alpha[block] / (pi_alpha[block] + pi_beta[block]);
+    }
+    if (block_model[block] == 2) {
+      has_global_local = true;
+      tau_sq[block] = global_scale[block] * global_scale[block];
+    }
+  }
   const double posterior_shape =
     residual_shape + static_cast<double>(n - 1) / 2.0;
   int retained_index = 0;
@@ -139,23 +152,25 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   for (int iteration = 1; iteration <= iterations; ++iteration) {
     // Update each coefficient from its univariate conditional normal.
     for (int j = 0; j < p; ++j) {
+      const int block = block_id[j] - 1;
+      const int model = block_model[block];
       double conditional_numerator = 0.0;
       for (int i = 0; i < n; ++i) {
         residuals[i] += x_centered(i, j) * coefficient[j];
         conditional_numerator += x_centered(i, j) * residuals[i];
       }
-      const double prior_precision = use_global_local
-        ? 1.0 / tau_sq / local_var[j]
+      const double prior_precision = model == 2
+        ? 1.0 / tau_sq[block] / local_var[j]
         : 1.0 / prior_var[j];
       const double conditional_var = 1.0 / (
         x_squared[j] / residual_var + prior_precision
       );
       const double conditional_mean =
         conditional_var * conditional_numerator / residual_var;
-      if (use_spike_slab) {
+      if (model == 1) {
         const double epsilon = std::numeric_limits<double>::epsilon();
         const double bounded_pi = std::min(
-          std::max(pi, epsilon),
+          std::max(pi[block], epsilon),
           1.0 - epsilon
         );
         const double log_inclusion_odds =
@@ -171,7 +186,7 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           R::rbinom(1.0, inclusion_probability)
         );
       }
-      if (!use_spike_slab || inclusion[j] == 1) {
+      if (model != 1 || inclusion[j] == 1) {
         coefficient[j] = R::rnorm(
           conditional_mean,
           std::sqrt(conditional_var)
@@ -184,47 +199,71 @@ Rcpp::List blm_gibbs_rcpp_cpp(
       }
     }
 
-    if (use_spike_slab) {
-      int number_included = 0;
-      for (int j = 0; j < p; ++j) {
-        number_included += inclusion[j];
+    if (has_spike_slab) {
+      for (int block = 0; block < number_of_blocks; ++block) {
+        if (block_model[block] != 1) {
+          continue;
+        }
+        int number_included = 0;
+        int block_size = 0;
+        for (int j = 0; j < p; ++j) {
+          if (block_id[j] - 1 == block) {
+            number_included += inclusion[j];
+            ++block_size;
+          }
+        }
+        pi[block] = R::rbeta(
+          pi_alpha[block] + number_included,
+          pi_beta[block] + block_size - number_included
+        );
       }
-      pi = R::rbeta(
-        pi_alpha + number_included,
-        pi_beta + p - number_included
-      );
     }
 
-    if (use_global_local) {
-      for (int j = 0; j < p; ++j) {
-        const double raw_chi = coefficient[j] * coefficient[j] / tau_sq;
-        const double chi = std::max(
-          raw_chi,
-          std::numeric_limits<double>::min()
-        );
-        local_var[j] = draw_gig(
-          local_a - 0.5,
-          chi,
-          2.0 * local_aux[j]
-        );
-        local_aux[j] = R::rgamma(
-          local_a + local_b,
-          1.0 / (1.0 + local_var[j])
-        );
-      }
+    if (has_global_local) {
+      for (int block = 0; block < number_of_blocks; ++block) {
+        if (block_model[block] != 2) {
+          continue;
+        }
+        int block_size = 0;
+        for (int j = 0; j < p; ++j) {
+          if (block_id[j] - 1 != block) {
+            continue;
+          }
+          ++block_size;
+          const double raw_chi =
+            coefficient[j] * coefficient[j] / tau_sq[block];
+          const double chi = std::max(
+            raw_chi,
+            std::numeric_limits<double>::min()
+          );
+          local_var[j] = draw_gig(
+            local_a[block] - 0.5,
+            chi,
+            2.0 * local_aux[j]
+          );
+          local_aux[j] = R::rgamma(
+            local_a[block] + local_b[block],
+            1.0 / (1.0 + local_var[j])
+          );
+        }
 
-      double tau_rate = 1.0 / global_aux;
-      for (int j = 0; j < p; ++j) {
-        tau_rate += coefficient[j] * coefficient[j] /
-          (2.0 * local_var[j]);
+        double tau_rate = 1.0 / global_aux[block];
+        for (int j = 0; j < p; ++j) {
+          if (block_id[j] - 1 == block) {
+            tau_rate += coefficient[j] * coefficient[j] /
+              (2.0 * local_var[j]);
+          }
+        }
+        tau_sq[block] = 1.0 / R::rgamma(
+          (static_cast<double>(block_size) + 1.0) / 2.0,
+          1.0 / tau_rate
+        );
+        const double global_aux_rate =
+          1.0 / (global_scale[block] * global_scale[block]) +
+          1.0 / tau_sq[block];
+        global_aux[block] =
+          1.0 / R::rgamma(1.0, 1.0 / global_aux_rate);
       }
-      tau_sq = 1.0 / R::rgamma(
-        (static_cast<double>(p) + 1.0) / 2.0,
-        1.0 / tau_rate
-      );
-      const double global_aux_rate =
-        1.0 / (global_scale * global_scale) + 1.0 / tau_sq;
-      global_aux = 1.0 / R::rgamma(1.0, 1.0 / global_aux_rate);
     }
 
     if (learn_residual_var) {
@@ -244,11 +283,13 @@ Rcpp::List blm_gibbs_rcpp_cpp(
         (iteration - burnin - 1) % thin == 0) {
       double intercept_mean = y_mean;
       for (int j = 0; j < p; ++j) {
+        const int block = block_id[j] - 1;
+        const int model = block_model[block];
         coefficient_samples(retained_index, j) = coefficient[j];
-        if (use_spike_slab) {
+        if (model == 1) {
           inclusion_samples(retained_index, j) = inclusion[j];
         }
-        if (use_global_local) {
+        if (model == 2) {
           local_var_samples(retained_index, j) = local_var[j];
         }
         intercept_mean -= x_mean[j] * coefficient[j];
@@ -258,11 +299,19 @@ Rcpp::List blm_gibbs_rcpp_cpp(
         std::sqrt(residual_var / n)
       );
       residual_var_samples[retained_index] = residual_var;
-      if (use_spike_slab) {
-        pi_samples[retained_index] = pi;
+      if (has_spike_slab) {
+        for (int block = 0; block < number_of_blocks; ++block) {
+          if (block_model[block] == 1) {
+            pi_samples(retained_index, block) = pi[block];
+          }
+        }
       }
-      if (use_global_local) {
-        tau_sq_samples[retained_index] = tau_sq;
+      if (has_global_local) {
+        for (int block = 0; block < number_of_blocks; ++block) {
+          if (block_model[block] == 2) {
+            tau_sq_samples(retained_index, block) = tau_sq[block];
+          }
+        }
       }
       ++retained_index;
     }

@@ -7,7 +7,15 @@ X <- cbind(
 y <- 1 + 2 * X[, "first"] - X[, "second"]
 
 fit_one <- multiple_blm(
-  y, X, 10,
+  y,
+  ETA = list(
+    normal = list(
+      X = X[, "first", drop = FALSE], model = "Normal", var = 10
+    ),
+    selection = list(
+      X = X[, "second", drop = FALSE], model = "SpikeSlab", var = 10
+    )
+  ),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 100,
@@ -16,7 +24,15 @@ fit_one <- multiple_blm(
   version = "R"
 )
 fit_two <- multiple_blm(
-  y, X, 10,
+  y,
+  ETA = list(
+    normal = list(
+      X = X[, "first", drop = FALSE], model = "Normal", var = 10
+    ),
+    selection = list(
+      X = X[, "second", drop = FALSE], model = "SpikeSlab", var = 10
+    )
+  ),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 100,
@@ -26,9 +42,15 @@ fit_two <- multiple_blm(
 )
 
 combined_fit <- fit_one
-combined_fit$coefficient_samples <- rbind(
-  fit_one$coefficient_samples,
-  fit_two$coefficient_samples
+for (block_name in names(combined_fit$ETA)) {
+  combined_fit$ETA[[block_name]]$coefficient_samples <- rbind(
+    fit_one$ETA[[block_name]]$coefficient_samples,
+    fit_two$ETA[[block_name]]$coefficient_samples
+  )
+}
+combined_fit$ETA$selection$pi_samples <- c(
+  fit_one$ETA$selection$pi_samples,
+  fit_two$ETA$selection$pi_samples
 )
 combined_fit$intercept_samples <- c(
   fit_one$intercept_samples,
@@ -40,13 +62,9 @@ combined_fit$residual_var_samples <- c(
 )
 combined_fit$chain_id <- rep.int(1:2, c(60L, 60L))
 
-# Include spike-and-slab pi draws.
-set.seed(103)
-combined_fit$pi_samples <- stats::rbeta(120, 2, 2)
-
 diagnostics <- assess_convergence(combined_fit, plot = FALSE)
 expected_parameters <- c(
-  "intercept", "residual_var", "pi"
+  "intercept", "residual_var", "pi_selection"
 )
 stopifnot(
   identical(names(diagnostics), c(
@@ -79,7 +97,11 @@ stopifnot(
   all(is.na(single_chain_diagnostics$rhat))
 )
 
-known_fit <- multiple_blm(y, X, 10, residual_var = 1)
+known_fit <- multiple_blm(
+  y,
+  ETA = list(X = X, model = "Normal", var = 10),
+  residual_var = 1
+)
 stopifnot(
   inherits(try(assess_convergence(known_fit), silent = TRUE), "try-error"),
   inherits(

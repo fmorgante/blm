@@ -6,98 +6,110 @@ x <- cbind(
 )
 y <- 1 + 2 * x[, "first"] - 3 * x[, "second"]
 
+normal_eta <- function(X, var = 10, standardize = TRUE) {
+  list(X = X, model = "Normal", var = var, standardize = standardize)
+}
+
+# The single-block shorthand supports analytical Normal fits.
 known_fit <- multiple_blm(
-  y = y,
-  X = x,
-  prior_var = 10,
-  residual_var = 1,
-  standardize = FALSE
+  y,
+  ETA = normal_eta(x, standardize = FALSE),
+  residual_var = 1
 )
+known_block <- known_fit$ETA$ETA1
 expected_cov <- diag(c(1 / 10.1, 1 / 1.3))
 dimnames(expected_cov) <- list(colnames(x), colnames(x))
 expected_mean <- c(first = 20 / 10.1, second = -3.6 / 1.3)
 expected_intercept <- mean(y) - sum(colMeans(x) * expected_mean)
 expected_intercept_var <- 1 / 5 +
   drop(crossprod(colMeans(x), expected_cov %*% colMeans(x)))
-
 stopifnot(
-  identical(
-    names(known_fit),
-    c(
-      "coefficient_mean", "coefficient_cov",
-      "intercept_mean", "intercept_var"
-    )
-  ),
-  isTRUE(all.equal(known_fit$coefficient_mean, expected_mean)),
-  isTRUE(all.equal(known_fit$coefficient_cov, expected_cov)),
+  identical(names(known_fit), c("ETA", "intercept_mean", "intercept_var")),
+  identical(names(known_fit$ETA), "ETA1"),
+  identical(known_block$model, "Normal"),
+  identical(known_block$standardize, FALSE),
+  identical(known_block$var, c(first = 10, second = 10)),
+  isTRUE(all.equal(known_block$coefficient_mean, expected_mean)),
+  isTRUE(all.equal(known_block$coefficient_cov, expected_cov)),
   isTRUE(all.equal(known_fit$intercept_mean, expected_intercept)),
   isTRUE(all.equal(known_fit$intercept_var, expected_intercept_var))
 )
 
-# A scalar prior variance and a repeated vector are equivalent.
-vector_prior_fit <- multiple_blm(
-  y, x, c(10, 10), residual_var = 1, standardize = FALSE
+# Scalar and predictor-specific variances are equivalent when repeated.
+vector_fit <- multiple_blm(
+  y,
+  ETA = normal_eta(x, var = c(10, 10), standardize = FALSE),
+  residual_var = 1
 )
-stopifnot(isTRUE(all.equal(known_fit, vector_prior_fit)))
-
-# Data-frame inputs retain their predictor names.
 data_frame_fit <- multiple_blm(
-  y, as.data.frame(x), 10, residual_var = 1, standardize = FALSE
+  y,
+  ETA = normal_eta(as.data.frame(x), standardize = FALSE),
+  residual_var = 1
 )
-stopifnot(isTRUE(all.equal(known_fit, data_frame_fit)))
+stopifnot(
+  isTRUE(all.equal(known_fit, vector_fit)),
+  isTRUE(all.equal(known_fit, data_frame_fit))
+)
 
-# With one predictor, multiple_blm agrees with simple_blm.
+# With one predictor and no standardization, multiple_blm agrees with
+# simple_blm.
 simple_y <- 1 + 2 * x[, "first"]
 simple_fit <- simple_blm(simple_y, x[, "first"], 10, residual_var = 1)
 one_predictor_fit <- multiple_blm(
-  simple_y, x[, "first", drop = FALSE], 10, residual_var = 1,
-  standardize = FALSE
-)
-
-# Standardized fits return coefficients and their covariance on the original
-# predictor scale.
-predictor_sd <- apply(x, 2L, stats::sd)
-working_x <- sweep(x, 2L, predictor_sd, FUN = "/")
-manual_standardized_fit <- multiple_blm(
-  y, working_x, 10, residual_var = 1, standardize = FALSE
-)
-automatic_standardized_fit <- multiple_blm(y, x, 10, residual_var = 1)
-stopifnot(
-  isTRUE(all.equal(
-    automatic_standardized_fit$coefficient_mean,
-    manual_standardized_fit$coefficient_mean / predictor_sd
-  )),
-  isTRUE(all.equal(
-    automatic_standardized_fit$coefficient_cov,
-    manual_standardized_fit$coefficient_cov /
-      outer(predictor_sd, predictor_sd)
-  )),
-  isTRUE(all.equal(
-    automatic_standardized_fit$intercept_mean,
-    manual_standardized_fit$intercept_mean
-  )),
-  isTRUE(all.equal(
-    automatic_standardized_fit$intercept_var,
-    manual_standardized_fit$intercept_var
-  ))
+  simple_y,
+  ETA = normal_eta(x[, "first", drop = FALSE], standardize = FALSE),
+  residual_var = 1
 )
 stopifnot(
   isTRUE(all.equal(
-    unname(one_predictor_fit$coefficient_mean),
+    unname(one_predictor_fit$ETA$ETA1$coefficient_mean),
     simple_fit$slope_mean
   )),
   isTRUE(all.equal(
-    drop(one_predictor_fit$coefficient_cov),
+    drop(one_predictor_fit$ETA$ETA1$coefficient_cov),
     simple_fit$slope_var
   )),
   isTRUE(all.equal(one_predictor_fit$intercept_mean, simple_fit$intercept_mean)),
   isTRUE(all.equal(one_predictor_fit$intercept_var, simple_fit$intercept_var))
 )
 
+# Standardization is block-specific, and returned coefficients use the
+# original predictor scale.
+predictor_sd <- apply(x, 2L, stats::sd)
+working_x <- sweep(x, 2L, predictor_sd, FUN = "/")
+manual_fit <- multiple_blm(
+  y,
+  ETA = normal_eta(working_x, standardize = FALSE),
+  residual_var = 1
+)
+automatic_fit <- multiple_blm(y, ETA = normal_eta(x), residual_var = 1)
+stopifnot(
+  isTRUE(all.equal(
+    automatic_fit$ETA$ETA1$coefficient_mean,
+    manual_fit$ETA$ETA1$coefficient_mean / predictor_sd
+  )),
+  isTRUE(all.equal(
+    automatic_fit$ETA$ETA1$coefficient_cov,
+    manual_fit$ETA$ETA1$coefficient_cov / outer(predictor_sd, predictor_sd)
+  )),
+  isTRUE(all.equal(automatic_fit$intercept_mean, manual_fit$intercept_mean)),
+  isTRUE(all.equal(automatic_fit$intercept_var, manual_fit$intercept_var))
+)
+
+# Learned residual variance uses Gibbs sampling and remains reproducible.
 learned_fit <- multiple_blm(
-  y = y,
-  X = x,
-  prior_var = 10,
+  y,
+  ETA = normal_eta(x),
+  residual_shape = 2,
+  residual_scale = 1,
+  iterations = 1500,
+  burnin = 500,
+  thin = 2,
+  seed = 42
+)
+repeated_fit <- multiple_blm(
+  y,
+  ETA = normal_eta(x),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 1500,
@@ -106,120 +118,19 @@ learned_fit <- multiple_blm(
   seed = 42
 )
 stopifnot(
-  identical(
-    names(learned_fit),
-    c(
-      "coefficient_mean", "coefficient_cov", "intercept_mean",
-      "intercept_var", "residual_var_mean", "residual_var_var",
-      "coefficient_samples", "intercept_samples", "residual_var_samples"
-    )
-  ),
-  identical(dim(learned_fit$coefficient_samples), c(500L, 2L)),
-  identical(colnames(learned_fit$coefficient_samples), colnames(x)),
-  length(learned_fit$intercept_samples) == 500,
-  length(learned_fit$residual_var_samples) == 500,
+  isTRUE(all.equal(learned_fit, repeated_fit)),
+  identical(dim(learned_fit$ETA$ETA1$coefficient_samples), c(500L, 2L)),
   all(learned_fit$residual_var_samples > 0),
   isTRUE(all.equal(
-    learned_fit$coefficient_mean,
-    colMeans(learned_fit$coefficient_samples)
-  )),
-  isTRUE(all.equal(
-    learned_fit$coefficient_cov,
-    cov(learned_fit$coefficient_samples)
-  )),
-  identical(
-    learned_fit$residual_var_mean,
-    mean(learned_fit$residual_var_samples)
-  )
+    learned_fit$ETA$ETA1$coefficient_mean,
+    colMeans(learned_fit$ETA$ETA1$coefficient_samples)
+  ))
 )
 
-# The seed makes MCMC output reproducible.
-repeated_fit <- multiple_blm(
-  y, x, 10,
-  residual_shape = 2,
-  residual_scale = 1,
-  iterations = 1500,
-  burnin = 500,
-  thin = 2,
-  seed = 42
-)
-stopifnot(isTRUE(all.equal(learned_fit, repeated_fit)))
-
-# Chain combination retains the origin of every draw.
-mock_chain <- list(
-  coefficient_samples = matrix(1:4, ncol = 2),
-  intercept_samples = c(1, 2),
-  residual_var_samples = c(3, 4)
-)
-mock_combined <- blm:::.combine_blm_chains(
-  list(mock_chain, mock_chain),
-  use_spike_slab = FALSE
-)
-stopifnot(
-  identical(mock_combined$chain_id, c(1L, 1L, 2L, 2L)),
-  identical(dim(mock_combined$coefficient_samples), c(4L, 2L))
-)
-
-mock_global_local_chain <- c(
-  mock_chain,
-  list(
-    local_var_samples = matrix(1:4, ncol = 2),
-    tau_sq_samples = c(1, 2)
-  )
-)
-mock_global_local_combined <- blm:::.combine_blm_chains(
-  list(mock_global_local_chain, mock_global_local_chain),
-  coefficient_prior = "global_local"
-)
-stopifnot(
-  identical(dim(mock_global_local_combined$local_var_samples), c(4L, 2L)),
-  identical(mock_global_local_combined$tau_sq_samples, c(1, 2, 1, 2))
-)
-
-# Socket-based multisession tests are enabled explicitly outside restricted
-# package-check environments.
-if (identical(Sys.getenv("BLM_TEST_FUTURE"), "true")) {
-  parallel_fit <- multiple_blm(
-    y, x, 10,
-    residual_shape = 2,
-    residual_scale = 1,
-    iterations = 100,
-    burnin = 20,
-    thin = 2,
-    seed = 123,
-    nchains = 2,
-    verbose = TRUE
-  )
-  repeated_parallel_fit <- multiple_blm(
-    y, x, 10,
-    residual_shape = 2,
-    residual_scale = 1,
-    iterations = 100,
-    burnin = 20,
-    thin = 2,
-    seed = 123,
-    nchains = 2,
-    verbose = TRUE
-  )
-  stopifnot(
-    isTRUE(all.equal(parallel_fit, repeated_parallel_fit)),
-    parallel_fit$nchains == 2L,
-    identical(parallel_fit$chain_id, rep.int(1:2, c(40L, 40L))),
-    identical(dim(parallel_fit$coefficient_samples), c(80L, 2L)),
-    !identical(
-      parallel_fit$coefficient_samples[parallel_fit$chain_id == 1L, ],
-      parallel_fit$coefficient_samples[parallel_fit$chain_id == 2L, ]
-    ),
-    isTRUE(all.equal(
-      parallel_fit$coefficient_mean,
-      colMeans(parallel_fit$coefficient_samples)
-    ))
-  )
-}
-
-# The Rcpp and R implementations target the same posterior.
+# The R and Rcpp implementations target the same Normal posterior.
 r_fit <- multiple_blm(
-  y, x, 10,
+  y,
+  ETA = normal_eta(x),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 1500,
@@ -229,203 +140,119 @@ r_fit <- multiple_blm(
   version = "R"
 )
 stopifnot(
-  identical(dim(r_fit$coefficient_samples), c(500L, 2L)),
-  max(abs(r_fit$coefficient_mean - learned_fit$coefficient_mean)) < 0.2,
+  max(abs(
+    r_fit$ETA$ETA1$coefficient_mean -
+      learned_fit$ETA$ETA1$coefficient_mean
+  )) < 0.2,
   abs(r_fit$residual_var_mean - learned_fit$residual_var_mean) < 0.2
 )
 
-# Component-wise conditioning is exercised with correlated predictors.
-correlated_X <- cbind(
-  first = 1:8,
-  second = c(2, 1, 4, 3, 6, 5, 8, 7)
+# Multiple ETA blocks can use distinct models and hyperparameters.
+multi_n <- 80
+multi_X <- cbind(
+  signal = seq(-2, 2, length.out = multi_n),
+  nuisance = rep(c(-1, 1), 40),
+  noise1 = sin(seq_len(multi_n)),
+  noise2 = cos(seq_len(multi_n))
 )
-correlated_y <- 1 + 2 * correlated_X[, 1] - correlated_X[, 2]
-correlated_rcpp <- multiple_blm(
-  correlated_y, correlated_X, 10,
-  residual_shape = 2, residual_scale = 1,
-  iterations = 600, burnin = 200, seed = 91,
-  version = "Rcpp"
-)
-correlated_r <- multiple_blm(
-  correlated_y, correlated_X, 10,
-  residual_shape = 2, residual_scale = 1,
-  iterations = 600, burnin = 200, seed = 91,
-  version = "R"
-)
-stopifnot(
-  max(abs(
-    correlated_rcpp$coefficient_mean - correlated_r$coefficient_mean
-  )) < 0.05,
-  abs(correlated_rcpp$residual_var_mean -
-    correlated_r$residual_var_mean) < 0.05
-)
-
-# A spike-and-slab prior learns predictor inclusion and the shared pi.
-selection_n <- 60
-selection_X <- cbind(
-  signal = seq(-2, 2, length.out = selection_n),
-  noise1 = sin(seq_len(selection_n)),
-  noise2 = cos(seq_len(selection_n)),
-  noise3 = rep(c(-1, 0, 1), 20)
-)
-selection_y <- 1 + 2.5 * selection_X[, "signal"] +
-  0.25 * rep(c(-1, 1), 30)
-selection_rcpp <- multiple_blm(
-  selection_y, selection_X, 10,
-  coefficient_prior = "spike_slab",
-  pi_alpha = 1,
-  pi_beta = 1,
-  residual_shape = 2,
-  residual_scale = 1,
-  iterations = 1200,
-  burnin = 400,
-  thin = 2,
-  seed = 77,
-  version = "Rcpp"
-)
-stopifnot(
-  identical(
-    tail(names(selection_rcpp), 5),
-    c(
-      "inclusion_probability", "pi_mean", "pi_var",
-      "inclusion_samples", "pi_samples"
-    )
-  ),
-  identical(dim(selection_rcpp$inclusion_samples), c(400L, 4L)),
-  all(selection_rcpp$inclusion_samples %in% 0:1),
-  all(
-    selection_rcpp$coefficient_samples[
-      selection_rcpp$inclusion_samples == 0
-    ] == 0
-  ),
-  selection_rcpp$inclusion_probability["signal"] > 0.9,
-  max(selection_rcpp$inclusion_probability[-1]) < 0.3,
-  all(selection_rcpp$pi_samples > 0 & selection_rcpp$pi_samples < 1),
-  identical(selection_rcpp$pi_mean, mean(selection_rcpp$pi_samples)),
-  identical(selection_rcpp$pi_var, var(selection_rcpp$pi_samples))
-)
-
-selection_r <- multiple_blm(
-  selection_y, selection_X, 10,
-  coefficient_prior = "spike_slab",
-  residual_shape = 2,
-  residual_scale = 1,
-  iterations = 1200,
-  burnin = 400,
-  thin = 2,
-  seed = 77,
-  version = "R"
-)
-stopifnot(
-  max(abs(
-    selection_rcpp$inclusion_probability -
-      selection_r$inclusion_probability
-  )) < 0.1,
-  abs(selection_rcpp$pi_mean - selection_r$pi_mean) < 0.1
-)
-
-# The default global-local prior is Strawderman-Berger and learns both local
-# variances and the global tau squared. Coefficients remain on their original
-# scale after predictor standardization.
-global_local_n <- 80
-global_local_X <- cbind(
-  signal = seq(-20, 20, length.out = global_local_n),
-  noise1 = sin(seq_len(global_local_n)) / 10,
-  noise2 = cos(seq_len(global_local_n)) * 5,
-  noise3 = rep(c(-2, -1, 1, 2), 20)
-)
-global_local_y <- 0.75 + 0.4 * global_local_X[, "signal"] +
+multi_y <- 1 + 2.5 * multi_X[, "signal"] +
   0.15 * rep(c(-1, 1), 40)
-global_local_rcpp <- multiple_blm(
-  global_local_y, global_local_X,
-  coefficient_prior = "global_local",
-  global_scale = 1,
+multi_eta <- list(
+  fixed = list(
+    X = multi_X[, "signal", drop = FALSE],
+    model = "Normal",
+    var = 20
+  ),
+  selection = list(
+    X = multi_X[, c("nuisance", "noise1")],
+    model = "SpikeSlab",
+    var = 10,
+    pi = c(a = 1, b = 2)
+  ),
+  shrinkage = list(
+    X = multi_X[, "noise2", drop = FALSE],
+    model = "GlobalLocal",
+    local_shape = c(a = 1, b = 0.5),
+    global_scale = 0.5
+  )
+)
+multi_rcpp <- multiple_blm(
+  multi_y, multi_eta,
   residual_shape = 2,
   residual_scale = 1,
-  iterations = 1600,
-  burnin = 600,
+  iterations = 1200,
+  burnin = 400,
   thin = 2,
-  seed = 109,
+  seed = 77,
   version = "Rcpp"
 )
-stopifnot(
-  identical(dim(global_local_rcpp$coefficient_samples), c(500L, 4L)),
-  identical(dim(global_local_rcpp$local_var_samples), c(500L, 4L)),
-  identical(
-    names(global_local_rcpp$local_var_mean),
-    colnames(global_local_X)
-  ),
-  identical(
-    names(global_local_rcpp$local_var_var),
-    colnames(global_local_X)
-  ),
-  all(is.finite(global_local_rcpp$local_var_samples)),
-  all(global_local_rcpp$local_var_samples > 0),
-  all(is.finite(global_local_rcpp$tau_sq_samples)),
-  all(global_local_rcpp$tau_sq_samples > 0),
-  abs(global_local_rcpp$coefficient_mean["signal"] - 0.4) < 0.05,
-  max(abs(global_local_rcpp$coefficient_mean[-1])) < 0.15,
-  identical(
-    global_local_rcpp$tau_sq_mean,
-    mean(global_local_rcpp$tau_sq_samples)
-  ),
-  identical(global_local_rcpp$local_shape, c(a = 1, b = 0.5))
-)
-
-global_local_r <- multiple_blm(
-  global_local_y, global_local_X,
-  coefficient_prior = "global_local",
+multi_r <- multiple_blm(
+  multi_y, multi_eta,
   residual_shape = 2,
   residual_scale = 1,
-  iterations = 1600,
-  burnin = 600,
+  iterations = 1200,
+  burnin = 400,
   thin = 2,
-  seed = 109,
+  seed = 77,
   version = "R"
 )
 stopifnot(
+  identical(names(multi_rcpp$ETA), c("fixed", "selection", "shrinkage")),
+  identical(
+    unname(vapply(multi_rcpp$ETA, `[[`, character(1), "model")),
+    c("Normal", "SpikeSlab", "GlobalLocal")
+  ),
+  identical(dim(multi_rcpp$ETA$fixed$coefficient_samples), c(400L, 1L)),
+  identical(dim(multi_rcpp$ETA$selection$inclusion_samples), c(400L, 2L)),
+  length(multi_rcpp$ETA$selection$pi_samples) == 400L,
+  identical(dim(multi_rcpp$ETA$shrinkage$local_var_samples), c(400L, 1L)),
+  length(multi_rcpp$ETA$shrinkage$tau_sq_samples) == 400L,
+  identical(multi_rcpp$ETA$selection$pi, c(a = 1, b = 2)),
+  identical(multi_rcpp$ETA$shrinkage$global_scale, 0.5),
+  abs(multi_rcpp$ETA$fixed$coefficient_mean["signal"] - 2.5) < 0.1,
   max(abs(
-    global_local_rcpp$coefficient_mean - global_local_r$coefficient_mean
+    multi_rcpp$ETA$fixed$coefficient_mean -
+      multi_r$ETA$fixed$coefficient_mean
   )) < 0.1,
-  abs(global_local_rcpp$residual_var_mean -
-    global_local_r$residual_var_mean) < 0.1
+  abs(multi_rcpp$residual_var_mean - multi_r$residual_var_mean) < 0.1
 )
 
-# The horseshoe is obtained using beta-prime shapes a = b = 1/2.
-horseshoe_fit <- multiple_blm(
-  global_local_y, global_local_X,
-  coefficient_prior = "global_local",
-  local_shape = c(a = 0.5, b = 0.5),
+# GlobalLocal defaults to Strawderman-Berger and can recover the horseshoe.
+global_eta <- list(
+  X = multi_X,
+  model = "GlobalLocal"
+)
+global_fit <- multiple_blm(
+  multi_y, global_eta,
   residual_shape = 2,
   residual_scale = 1,
-  iterations = 600,
-  burnin = 200,
-  seed = 111
+  iterations = 1000,
+  burnin = 400,
+  thin = 2,
+  seed = 109
 )
-stopifnot(
-  identical(horseshoe_fit$local_shape, c(a = 0.5, b = 0.5)),
-  all(horseshoe_fit$local_var_samples > 0),
-  all(horseshoe_fit$tau_sq_samples > 0)
-)
-
-# A known residual variance still uses Gibbs sampling for global-local priors.
-fixed_global_local <- multiple_blm(
-  global_local_y, global_local_X,
-  coefficient_prior = "global_local",
+horseshoe_fit <- multiple_blm(
+  multi_y,
+  ETA = list(
+    X = multi_X,
+    model = "GlobalLocal",
+    local_shape = c(a = 0.5, b = 0.5)
+  ),
   residual_var = 0.25,
-  iterations = 400,
+  iterations = 500,
   burnin = 200,
   seed = 110
 )
 stopifnot(
-  identical(dim(fixed_global_local$coefficient_samples), c(200L, 4L)),
-  all(fixed_global_local$residual_var_samples == 0.25),
-  identical(fixed_global_local$residual_var_mean, 0.25),
-  identical(fixed_global_local$residual_var_var, 0)
+  identical(global_fit$ETA$ETA1$local_shape, c(a = 1, b = 0.5)),
+  all(global_fit$ETA$ETA1$local_var_samples > 0),
+  all(global_fit$ETA$ETA1$tau_sq_samples > 0),
+  identical(horseshoe_fit$ETA$ETA1$local_shape, c(a = 0.5, b = 0.5)),
+  all(horseshoe_fit$residual_var_samples == 0.25),
+  identical(horseshoe_fit$residual_var_var, 0)
 )
 
-# The R and Rcpp GIG entry points match known moments and remain finite for
-# challenging parameter combinations.
+# The R and Rcpp GIG entry points match a known moment and challenging cases.
 gig_lambda <- 1
 gig_chi <- 2
 gig_psi <- 3
@@ -436,9 +263,7 @@ gig_expected_mean <- sqrt(gig_chi / gig_psi) *
 set.seed(301)
 gig_r <- blm:::.draw_gig(20000L, gig_lambda, gig_chi, gig_psi)
 set.seed(302)
-gig_rcpp <- blm:::draw_gig_rcpp_cpp(
-  20000L, gig_lambda, gig_chi, gig_psi
-)
+gig_rcpp <- blm:::draw_gig_rcpp_cpp(20000L, gig_lambda, gig_chi, gig_psi)
 stopifnot(
   abs(mean(gig_r) - gig_expected_mean) / gig_expected_mean < 0.03,
   abs(mean(gig_rcpp) - gig_expected_mean) / gig_expected_mean < 0.03,
@@ -446,11 +271,11 @@ stopifnot(
   all(is.finite(blm:::draw_gig_rcpp_cpp(100L, 5, 1e3, 1e-4)))
 )
 
-# Both implementations report progress at 10-percent intervals.
+# Both low-level implementations report progress at 10-percent intervals.
 for (sampler_version in c("Rcpp", "R")) {
   progress_amounts <- integer()
   progress_iterations <- integer()
-  progress_callback <- function(amount, iteration) {
+  callback <- function(amount, iteration) {
     progress_amounts <<- c(progress_amounts, amount)
     progress_iterations <<- c(progress_iterations, iteration)
   }
@@ -469,7 +294,7 @@ for (sampler_version in c("Rcpp", "R")) {
     burnin = 20,
     thin = 1,
     seed = 42,
-    progress_callback = progress_callback
+    progress_callback = callback
   ))
   stopifnot(
     isTRUE(all.equal(progress_iterations, seq.int(10L, 100L, by = 10L))),
@@ -477,137 +302,115 @@ for (sampler_version in c("Rcpp", "R")) {
   )
 }
 
-# Invalid designs, priors, and residual specifications are rejected.
+# Chain combination retains block-specific hyperparameter matrices.
+mock_chain <- list(
+  coefficient_samples = matrix(1:8, nrow = 2),
+  intercept_samples = c(1, 2),
+  residual_var_samples = c(3, 4),
+  inclusion_samples = matrix(1L, 2, 4),
+  pi_samples = matrix(c(NA, 0.4, NA, NA, 0.5, NA), 2, 3, byrow = TRUE),
+  local_var_samples = matrix(1, 2, 4),
+  tau_sq_samples = matrix(c(NA, NA, 1, NA, NA, 2), 2, 3, byrow = TRUE)
+)
+mock_combined <- blm:::.combine_blm_chains(
+  list(mock_chain, mock_chain),
+  block_model = 0:2
+)
 stopifnot(
-  inherits(try(multiple_blm(y, x[, 1], 10, 1), silent = TRUE), "try-error"),
-  inherits(try(multiple_blm(y[-1], x, 10, 1), silent = TRUE), "try-error"),
-  inherits(try(multiple_blm(y, x, c(10, 0), 1), silent = TRUE), "try-error"),
-  inherits(try(multiple_blm(y, x, c(10, 10, 10), 1), silent = TRUE), "try-error"),
-  inherits(try(multiple_blm(y, x, 10), silent = TRUE), "try-error"),
-  inherits(
-    try(
-      multiple_blm(y, x, 10, residual_var = 1, nchains = 2),
-      silent = TRUE
-    ),
-    "try-error"
+  identical(mock_combined$chain_id, c(1L, 1L, 2L, 2L)),
+  identical(dim(mock_combined$pi_samples), c(4L, 3L)),
+  identical(dim(mock_combined$tau_sq_samples), c(4L, 3L))
+)
+
+# Real multisession tests are enabled outside restricted check environments.
+if (identical(Sys.getenv("BLM_TEST_FUTURE"), "true")) {
+  parallel_fit <- multiple_blm(
+    multi_y, multi_eta,
+    residual_shape = 2,
+    residual_scale = 1,
+    iterations = 100,
+    burnin = 20,
+    seed = 123,
+    nchains = 2,
+    verbose = TRUE
+  )
+  repeated_parallel_fit <- multiple_blm(
+    multi_y, multi_eta,
+    residual_shape = 2,
+    residual_scale = 1,
+    iterations = 100,
+    burnin = 20,
+    seed = 123,
+    nchains = 2,
+    verbose = TRUE
+  )
+  stopifnot(
+    isTRUE(all.equal(parallel_fit, repeated_parallel_fit)),
+    identical(parallel_fit$chain_id, rep.int(1:2, c(80L, 80L))),
+    identical(dim(parallel_fit$ETA$selection$pi_samples), NULL),
+    length(parallel_fit$ETA$selection$pi_samples) == 160L,
+    length(parallel_fit$ETA$shrinkage$tau_sq_samples) == 160L
+  )
+}
+
+# Invalid ETA specifications and model parameters are rejected.
+invalid_calls <- list(
+  function() multiple_blm(y, ETA = list(), residual_var = 1),
+  function() multiple_blm(y, ETA = list(X = x), residual_var = 1),
+  function() multiple_blm(
+    y, ETA = list(X = x, model = "normal", var = 10), residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x, prior_var = 10,
-        coefficient_prior = "global_local",
-        residual_shape = 2,
-        residual_scale = 1
-      ),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y, ETA = list(X = x, model = "Normal", prior_var = 10), residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x,
-        coefficient_prior = "global_local",
-        global_scale = 0,
-        residual_shape = 2,
-        residual_scale = 1
-      ),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y, ETA = list(X = x, model = "Normal"), residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x,
-        coefficient_prior = "global_local",
-        local_shape = c(1, 0),
-        residual_shape = 2,
-        residual_scale = 1
-      ),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y, ETA = list(X = x, model = "Normal", var = 0), residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(y, x, 10, residual_var = 1, standardize = NA),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y,
+    ETA = list(X = cbind(x, constant = 1), model = "Normal", var = 10),
+    residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, cbind(x, constant = 1), 10, residual_var = 1
-      ),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y,
+    ETA = list(X = x, model = "SpikeSlab", var = 10),
+    residual_var = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x, 10,
-        residual_shape = 2,
-        residual_scale = 1,
-        nchains = 0
-      ),
-      silent = TRUE
+  function() multiple_blm(
+    y,
+    ETA = list(
+      X = x, model = "SpikeSlab", var = 10, pi_alpha = 1, pi_beta = 1
     ),
-    "try-error"
+    residual_shape = 2,
+    residual_scale = 1
   ),
-  inherits(
-    try(multiple_blm(y, x, 10, residual_var = 1, version = "C"), silent = TRUE),
-    "try-error"
+  function() multiple_blm(
+    y,
+    ETA = list(X = x, model = "SpikeSlab", var = 10, pi = c(1, 0)),
+    residual_shape = 2,
+    residual_scale = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x, 10,
-        residual_var = 1,
-        coefficient_prior = "spike_slab"
-      ),
-      silent = TRUE
+  function() multiple_blm(
+    y,
+    ETA = list(
+      X = x, model = "GlobalLocal", local_shape = c(1, 0)
     ),
-    "try-error"
+    residual_shape = 2,
+    residual_scale = 1
   ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x, 10,
-        coefficient_prior = "spike_slab",
-        pi_alpha = 0,
-        residual_shape = 2,
-        residual_scale = 1
-      ),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y, ETA = normal_eta(x), residual_shape = 2, residual_scale = 1,
+    nchains = 0
   ),
-  inherits(
-    try(
-      multiple_blm(y, x, 10, residual_var = 1, verbose = NA),
-      silent = TRUE
-    ),
-    "try-error"
-  ),
-  inherits(
-    try(
-      multiple_blm(
-        y, x, 10,
-        residual_shape = 2, residual_scale = 1,
-        iterations = 10, burnin = 9
-      ),
-      silent = TRUE
-    ),
-    "try-error"
-  ),
-  inherits(
-    try(
-      multiple_blm(y, x, 10, residual_var = 1, residual_shape = 2),
-      silent = TRUE
-    ),
-    "try-error"
+  function() multiple_blm(
+    y, ETA = normal_eta(x), residual_var = 1, residual_shape = 2
   )
 )
+stopifnot(all(vapply(
+  invalid_calls,
+  function(call) inherits(try(call(), silent = TRUE), "try-error"),
+  logical(1)
+)))

@@ -1,246 +1,105 @@
 #' Bayesian multiple linear regression
 #'
-#' Computes posterior distributions for the coefficients and intercept in a
-#' multiple linear regression. The intercept is integrated out by centering the
-#' response and every predictor. The residual variance can be fixed or learned
-#' using an inverse-gamma prior and Gibbs sampling.
+#' Fits one or more linear-predictor blocks with block-specific coefficient
+#' priors. Predictor matrices, standardization, and prior parameters are
+#' specified through a BGLR-style `ETA` list. The intercept is integrated out
+#' during coefficient sampling by centering the response and predictors.
 #'
-#' @param y A numeric vector containing the response values.
-#' @param X A numeric matrix or data frame with observations in rows and
-#'   predictors in columns.
-#' @param prior_var For the normal and spike-and-slab priors, a positive numeric
-#'   scalar giving a common prior variance
-#'   for all coefficients, or a positive numeric vector with one variance per
-#'   predictor. Must be `NULL` for the global-local prior.
-#' @param coefficient_prior The coefficient-prior family: `"normal"`,
-#'   `"spike_slab"`, or `"global_local"`. The global-local family uses
-#'   beta-prime local variances and learns a shared global variance.
-#' @param pi_alpha,pi_beta Positive shape parameters for the Beta prior on the
-#'   shared inclusion probability \eqn{\pi}. Used with the spike-and-slab prior.
-#' @param local_shape A positive numeric vector of length two containing the
-#'   beta-prime shape parameters `a` and `b`. The default `c(1, 0.5)` gives the
-#'   Strawderman-Berger prior; `c(0.5, 0.5)` gives the horseshoe prior. Used
-#'   with the global-local prior.
-#' @param global_scale A positive numeric scalar giving the scale of the
-#'   half-Cauchy prior on the global standard deviation \eqn{\tau}. The global
-#'   variance \eqn{\tau^2} is learned from the data. Used with the global-local
-#'   prior.
-#' @param standardize A logical scalar. If `TRUE`, the predictors are centered
-#'   and scaled before fitting. Coefficients and intercepts are always returned
-#'   on the original predictor scale.
-#' @param residual_var A positive numeric scalar giving the known residual
-#'   variance, or `NULL` to learn it from the data.
-#' @param residual_shape A positive numeric scalar giving the shape of the
-#'   inverse-gamma prior. Required when `residual_var = NULL`.
-#' @param residual_scale A positive numeric scalar giving the scale of the
-#'   inverse-gamma prior. Required when `residual_var = NULL`.
-#' @param iterations A positive integer giving the total number of Gibbs
-#'   iterations when Gibbs sampling is used.
-#' @param burnin A non-negative integer giving the number of initial Gibbs
-#'   iterations to discard.
-#' @param thin A positive integer giving the interval between retained draws.
-#' @param seed `NULL` or an integer used to initialize the random-number
-#'   generator.
-#' @param version The Gibbs-sampler implementation to use: `"Rcpp"` for the
-#'   compiled C++ implementation or `"R"` for the reference R implementation.
-#' @param verbose A logical scalar. If `TRUE`, display aggregate Gibbs
-#'   progress using [progressr::with_progress()], updated every 10 percent per
-#'   chain.
-#' @param nchains A positive integer giving the number of independent MCMC
-#'   chains. Values greater than one run chains in parallel using a temporary
-#'   \code{future::multisession} plan.
+#' @param y A finite numeric response vector.
+#' @param ETA A predictor specification or list of predictor specifications.
+#'   Each block must contain `X` and `model`. Available models are `"Normal"`,
+#'   `"SpikeSlab"`, and `"GlobalLocal"`. See Details.
+#' @param residual_var A positive known residual variance, or `NULL` to learn
+#'   it using an inverse-gamma prior.
+#' @param residual_shape,residual_scale Positive shape and scale parameters for
+#'   the inverse-gamma residual-variance prior. Required when
+#'   `residual_var = NULL`.
+#' @param iterations Total Gibbs iterations when sampling is required.
+#' @param burnin Number of initial iterations to discard.
+#' @param thin Interval between retained draws.
+#' @param seed `NULL` or an integer random-number seed.
+#' @param version Gibbs implementation: `"Rcpp"` or `"R"`.
+#' @param verbose If `TRUE`, display aggregate progress at 10-percent intervals
+#'   per chain using [progressr::with_progress()].
+#' @param nchains Number of independent chains. Multiple chains use a temporary
+#'   [future::multisession] plan.
 #'
-#' @return A named list containing `coefficient_mean`, `coefficient_cov`,
-#'   `intercept_mean`, and `intercept_var`. When the residual variance is
-#'   sampled, the list additionally contains `residual_var_mean`,
-#'   `residual_var_var`, `coefficient_samples`, `intercept_samples`, and
-#'   `residual_var_samples`.
-#'   With the spike-and-slab prior, the list also contains
-#'   `inclusion_probability`, `pi_mean`, `pi_var`, `inclusion_samples`,
-#'   and `pi_samples`.
-#'   With the global-local prior, it also contains `local_var_mean`,
-#'   `local_var_var`, `tau_sq_mean`, `tau_sq_var`, `local_var_samples`,
-#'   `tau_sq_samples`, and `local_shape`. These variance parameters refer to
-#'   the internally standardized coefficient scale when `standardize = TRUE`.
-#'   When `nchains > 1`, retained draws are combined across chains and the
-#'   result additionally contains `nchains` and a corresponding `chain_id`
-#'   for each draw.
+#' @return A list containing `ETA`, a named list of block-specific posterior
+#'   summaries, plus intercept and residual-variance summaries. Sampled fits
+#'   also contain intercept and residual-variance draws. With multiple chains,
+#'   `chain_id` identifies the origin of each retained draw.
 #'
-#' @details With known residual variance, the coefficients have independent
-#'   zero-mean normal priors with variances given by `prior_var`. These priors
-#'   are independent of the inverse-gamma residual-variance prior. Posterior
-#'   summaries are computed from retained Gibbs draws when the residual
-#'   variance is learned. During each Gibbs sweep, coefficients are updated one
-#'   at a time from their univariate conditional normal distributions.
-#'   For the spike-and-slab prior, inclusion indicators are sampled using the
-#'   coefficient-marginalized conditional odds, and the shared inclusion
-#'   probability is updated from its full conditional Beta distribution.
-#'   The global-local hierarchy is
-#'   \deqn{\beta_j \mid \tau^2, \psi_j \sim N(0, \tau^2\psi_j),}
-#'   \deqn{\psi_j \sim \mathrm{BetaPrime}(a,b), \qquad
-#'   \tau \sim C^+(0, \mathrm{global\_scale}).}
-#'   The local variances are updated from generalized inverse Gaussian full
-#'   conditionals, and \eqn{\tau^2} is updated from its inverse-gamma full
-#'   conditional. This coefficient prior is independent of the residual
-#'   variance. Global-local fits use Gibbs sampling even when `residual_var` is
-#'   known.
-#'   When `standardize = TRUE`, `prior_var` and `global_scale` describe the
-#'   coefficient scale after predictor standardization. All returned regression
-#'   coefficients, their covariance matrix, and intercept quantities are
-#'   transformed to the scale of the supplied `X`.
+#' @details `ETA` may be a single-block shorthand such as
+#'   `list(X = X, model = "Normal", var = 10)`, or a named list of blocks.
+#'   Every block accepts `standardize`, which defaults to `TRUE`. Returned
+#'   coefficients are always transformed to the original scale of that block's
+#'   supplied `X`.
+#'
+#'   A `"Normal"` block requires `var`, a scalar or one value per predictor.
+#'   A `"SpikeSlab"` block requires `var`, optionally accepts
+#'   `pi = c(a = 1, b = 1)`, and requires the residual variance to be learned. A
+#'   `"GlobalLocal"` block optionally accepts `local_shape = c(a = 1, b = 0.5)`
+#'   and `global_scale = 1`. Its hierarchy is
+#'   \deqn{\beta_j \mid \tau^2,\psi_j \sim N(0,\tau^2\psi_j),\qquad
+#'   \psi_j \sim \mathrm{BetaPrime}(a,b),}
+#'   with \eqn{\tau \sim C^+(0,\mathrm{global\_scale})}. Thus the default is
+#'   Strawderman-Berger, while `local_shape = c(0.5, 0.5)` gives the horseshoe.
+#'   The coefficient priors are independent of the residual variance.
 #' @export
 #'
 #' @examples
-#' X <- cbind(x1 = 1:5, x2 = c(0, 1, 0, 1, 0))
-#' y <- 1 + 2 * X[, "x1"] - 3 * X[, "x2"]
-#' multiple_blm(y, X, prior_var = 10, residual_var = 1)
+#' X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))
+#' y <- 1 + 2 * X[, "x1"] - X[, "x2"]
 #' multiple_blm(
-#'   y, X,
-#'   coefficient_prior = "global_local",
-#'   local_shape = c(a = 1, b = 0.5),
+#'   y,
+#'   ETA = list(X = X, model = "Normal", var = 10),
+#'   residual_var = 1
+#' )
+#' multiple_blm(
+#'   y,
+#'   ETA = list(markers = list(X = X, model = "GlobalLocal")),
 #'   residual_shape = 2,
 #'   residual_scale = 1,
-#'   seed = 123,
-#'   version = "Rcpp",
-#'   verbose = FALSE,
-#'   nchains = 1
+#'   iterations = 100,
+#'   burnin = 50,
+#'   seed = 123
 #' )
-multiple_blm <- function(y, X, prior_var = NULL, residual_var = NULL,
-                         coefficient_prior = c(
-                           "normal", "spike_slab", "global_local"
-                         ),
-                         pi_alpha = 1, pi_beta = 1,
-                         local_shape = c(a = 1, b = 0.5),
-                         global_scale = 1, standardize = TRUE,
+multiple_blm <- function(y, ETA, residual_var = NULL,
                          residual_shape = NULL, residual_scale = NULL,
                          iterations = 4000L, burnin = 1000L, thin = 1L,
                          seed = NULL, version = c("Rcpp", "R"),
                          verbose = FALSE, nchains = 1L) {
   version <- match.arg(version)
-  coefficient_prior <- match.arg(coefficient_prior)
   nchains <- .validate_nchains(nchains)
-  if (!is.logical(standardize) || length(standardize) != 1L ||
-      is.na(standardize)) {
-    stop("`standardize` must be TRUE or FALSE.", call. = FALSE)
-  }
   if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
     stop("`verbose` must be TRUE or FALSE.", call. = FALSE)
   }
   if (!is.numeric(y) || !is.atomic(y) || is.object(y) || !is.null(dim(y))) {
     stop("`y` must be a numeric vector.", call. = FALSE)
   }
-  if (length(y) < 2L) {
-    stop("`y` must contain at least two observations.", call. = FALSE)
-  }
-  if (anyNA(y) || any(!is.finite(y))) {
-    stop("`y` must contain only finite, non-missing values.", call. = FALSE)
-  }
-
-  X <- .as_predictor_matrix(X, length(y))
-  number_of_predictors <- ncol(X)
-  predictor_names <- colnames(X)
-  sampler_local_shape <- c(a = 1, b = 0.5)
-  if (coefficient_prior == "global_local") {
-    if (!is.null(prior_var)) {
-      stop(
-        "`prior_var` must be NULL for the global-local prior.",
-        call. = FALSE
-      )
-    }
-    local_shape <- .validate_local_shape(local_shape)
-    sampler_local_shape <- local_shape
-    .validate_variance(global_scale, "global_scale")
-    sampler_prior_var <- rep(1, number_of_predictors)
-  } else {
-    if (is.null(prior_var)) {
-      stop(
-        "`prior_var` is required for the normal and spike-and-slab priors.",
-        call. = FALSE
-      )
-    }
-    prior_var <- .validate_prior_var(prior_var, number_of_predictors)
-    sampler_prior_var <- prior_var
-  }
-  if (coefficient_prior == "spike_slab") {
-    .validate_variance(pi_alpha, "pi_alpha")
-    .validate_variance(pi_beta, "pi_beta")
-    if (!is.null(residual_var)) {
-      stop(
-        "`coefficient_prior = \"spike_slab\"` requires learning the residual variance.",
-        call. = FALSE
-      )
-    }
-  }
-
-  x_mean <- colMeans(X)
-  x_centered <- sweep(X, 2L, x_mean, FUN = "-")
-  predictor_scale <- if (standardize) {
-    sqrt(colSums(x_centered^2) / (nrow(X) - 1))
-  } else {
-    rep(1, number_of_predictors)
-  }
-  if (any(!is.finite(predictor_scale)) || any(predictor_scale <= 0)) {
+  if (length(y) < 2L || anyNA(y) || any(!is.finite(y))) {
     stop(
-      "`X` cannot contain constant predictors when `standardize = TRUE`.",
+      "`y` must contain at least two finite, non-missing values.",
       call. = FALSE
     )
   }
-  X_sampler <- sweep(X, 2L, predictor_scale, FUN = "/")
-  x_sampler_mean <- colMeans(X_sampler)
 
-  y_mean <- mean(y)
-  x_centered <- sweep(X_sampler, 2L, x_sampler_mean, FUN = "-")
-  y_centered <- y - y_mean
+  blocks <- .normalize_eta(ETA, length(y), residual_var)
+  block_sizes <- vapply(blocks, function(block) ncol(block$x), integer(1))
+  block_ends <- cumsum(block_sizes)
+  block_starts <- block_ends - block_sizes + 1L
+  block_indices <- Map(seq.int, block_starts, block_ends)
+  block_model <- vapply(blocks, `[[`, integer(1), "model_code")
+  block_id <- rep.int(seq_along(blocks), block_sizes)
 
-  if (!is.null(residual_var) && coefficient_prior == "normal") {
-    if (nchains > 1L) {
-      stop(
-        "`nchains > 1` is only available when the residual variance is learned.",
-        call. = FALSE
-      )
-    }
-    if (!is.null(residual_shape) || !is.null(residual_scale)) {
-      stop(
-        "Supply either `residual_var` or the inverse-gamma prior, not both.",
-        call. = FALSE
-      )
-    }
-    .validate_variance(residual_var, "residual_var")
-
-    prior_precision <- diag(
-      1 / sampler_prior_var,
-      nrow = number_of_predictors
+  x <- do.call(cbind, lapply(seq_along(blocks), function(block_index) {
+    block_x <- blocks[[block_index]]$x
+    colnames(block_x) <- paste0(
+      names(blocks)[block_index], "::", blocks[[block_index]]$predictor_names
     )
-    posterior_precision <- crossprod(x_centered) / residual_var +
-      prior_precision
-    sampler_coefficient_cov <- chol2inv(chol(posterior_precision))
-    sampler_coefficient_mean <- drop(
-      sampler_coefficient_cov %*%
-        crossprod(x_centered, y_centered) / residual_var
-    )
-    coefficient_mean <- sampler_coefficient_mean / predictor_scale
-    coefficient_cov <- sampler_coefficient_cov /
-      outer(predictor_scale, predictor_scale)
-    names(coefficient_mean) <- predictor_names
-    dimnames(coefficient_cov) <- list(predictor_names, predictor_names)
-    intercept_mean <- drop(
-      y_mean - crossprod(x_sampler_mean, sampler_coefficient_mean)
-    )
-    intercept_var <- drop(
-      residual_var / length(y) +
-        crossprod(
-          x_sampler_mean,
-          sampler_coefficient_cov %*% x_sampler_mean
-        )
-    )
-
-    return(list(
-      coefficient_mean = coefficient_mean,
-      coefficient_cov = coefficient_cov,
-      intercept_mean = intercept_mean,
-      intercept_var = intercept_var
-    ))
-  }
+    block_x
+  }))
+  prior_var <- unlist(lapply(blocks, `[[`, "var"), use.names = FALSE)
 
   if (!is.null(residual_var)) {
     if (!is.null(residual_shape) || !is.null(residual_scale)) {
@@ -264,84 +123,153 @@ multiple_blm <- function(y, X, prior_var = NULL, residual_var = NULL,
     .validate_variance(residual_scale, "residual_scale")
   }
 
+  if (!is.null(residual_var) && all(block_model == 0L)) {
+    if (nchains > 1L) {
+      stop(
+        "`nchains > 1` is unavailable for an analytical Normal fit.",
+        call. = FALSE
+      )
+    }
+    x_mean <- colMeans(x)
+    x_centered <- sweep(x, 2L, x_mean, FUN = "-")
+    y_mean <- mean(y)
+    posterior_precision <- crossprod(x_centered) / residual_var +
+      diag(1 / prior_var, nrow = ncol(x))
+    working_cov <- chol2inv(chol(posterior_precision))
+    working_mean <- drop(
+      working_cov %*% crossprod(x_centered, y - y_mean) / residual_var
+    )
+    eta_result <- lapply(seq_along(blocks), function(block_index) {
+      block <- blocks[[block_index]]
+      indices <- block_indices[[block_index]]
+      coefficient_mean <- working_mean[indices] / block$predictor_scale
+      coefficient_cov <- working_cov[indices, indices, drop = FALSE] /
+        outer(block$predictor_scale, block$predictor_scale)
+      names(coefficient_mean) <- block$predictor_names
+      dimnames(coefficient_cov) <- list(
+        block$predictor_names,
+        block$predictor_names
+      )
+      list(
+        model = block$model,
+        standardize = block$standardize,
+        var = stats::setNames(block$var, block$predictor_names),
+        coefficient_mean = coefficient_mean,
+        coefficient_cov = coefficient_cov
+      )
+    })
+    names(eta_result) <- names(blocks)
+    intercept_mean <- drop(mean(y) - crossprod(x_mean, working_mean))
+    intercept_var <- drop(
+      residual_var / length(y) +
+        crossprod(x_mean, working_cov %*% x_mean)
+    )
+    return(list(
+      ETA = eta_result,
+      intercept_mean = intercept_mean,
+      intercept_var = intercept_var
+    ))
+  }
+
+  pi_alpha <- vapply(blocks, `[[`, numeric(1), "pi_alpha")
+  pi_beta <- vapply(blocks, `[[`, numeric(1), "pi_beta")
+  global_scale <- vapply(blocks, `[[`, numeric(1), "global_scale")
+  local_a <- vapply(blocks, function(block) block$local_shape[1L], numeric(1))
+  local_b <- vapply(blocks, function(block) block$local_shape[2L], numeric(1))
   sampler_arguments <- list(
     y = y,
-    x = X_sampler,
-    prior_var = sampler_prior_var,
+    x = x,
+    prior_var = prior_var,
     residual_shape = if (is.null(residual_shape)) 1 else residual_shape,
     residual_scale = if (is.null(residual_scale)) 1 else residual_scale,
     residual_var = residual_var,
     iterations = iterations,
     burnin = burnin,
     thin = thin,
-    coefficient_prior = coefficient_prior,
+    block_id = block_id,
+    block_model = block_model,
     pi_alpha = pi_alpha,
     pi_beta = pi_beta,
     global_scale = global_scale,
-    local_shape = sampler_local_shape
+    local_a = local_a,
+    local_b = local_b
   )
-
-  if (verbose) {
-    samples <- progressr::with_progress({
-      progress <- progressr::progressor(steps = nchains * iterations)
-      .run_blm_chains(
-        sampler_arguments = sampler_arguments,
-        version = version,
-        nchains = nchains,
-        seed = seed,
-        coefficient_prior = coefficient_prior,
-        progressor = progress
-      )
-    }, enable = TRUE)
-  } else {
-    samples <- .run_blm_chains(
+  run_chains <- function(progressor = NULL) {
+    .run_blm_chains(
       sampler_arguments = sampler_arguments,
       version = version,
       nchains = nchains,
       seed = seed,
-      coefficient_prior = coefficient_prior
+      block_model = block_model,
+      progressor = progressor
     )
   }
+  samples <- if (verbose) {
+    progressr::with_progress({
+      progress <- progressr::progressor(steps = nchains * iterations)
+      run_chains(progress)
+    }, enable = TRUE)
+  } else {
+    run_chains()
+  }
 
-  samples$coefficient_samples <- sweep(
-    samples$coefficient_samples,
-    2L,
-    predictor_scale,
-    FUN = "/"
-  )
-  colnames(samples$coefficient_samples) <- predictor_names
+  eta_result <- lapply(seq_along(blocks), function(block_index) {
+    block <- blocks[[block_index]]
+    indices <- block_indices[[block_index]]
+    coefficient_samples <- sweep(
+      samples$coefficient_samples[, indices, drop = FALSE],
+      2L,
+      block$predictor_scale,
+      FUN = "/"
+    )
+    colnames(coefficient_samples) <- block$predictor_names
+    result <- list(
+      model = block$model,
+      standardize = block$standardize,
+      coefficient_mean = colMeans(coefficient_samples),
+      coefficient_cov = stats::cov(coefficient_samples),
+      coefficient_samples = coefficient_samples
+    )
+    if (block$model %in% c("Normal", "SpikeSlab")) {
+      result$var <- stats::setNames(block$var, block$predictor_names)
+    }
+    if (block$model == "SpikeSlab") {
+      inclusion_samples <- samples$inclusion_samples[, indices, drop = FALSE]
+      colnames(inclusion_samples) <- block$predictor_names
+      pi_samples <- samples$pi_samples[, block_index]
+      result$inclusion_probability <- colMeans(inclusion_samples)
+      result$pi_mean <- mean(pi_samples)
+      result$pi_var <- stats::var(pi_samples)
+      result$inclusion_samples <- inclusion_samples
+      result$pi_samples <- pi_samples
+      result$pi <- c(a = block$pi_alpha, b = block$pi_beta)
+    }
+    if (block$model == "GlobalLocal") {
+      local_var_samples <- samples$local_var_samples[, indices, drop = FALSE]
+      colnames(local_var_samples) <- block$predictor_names
+      tau_sq_samples <- samples$tau_sq_samples[, block_index]
+      result$local_var_mean <- colMeans(local_var_samples)
+      result$local_var_var <- apply(local_var_samples, 2L, stats::var)
+      result$tau_sq_mean <- mean(tau_sq_samples)
+      result$tau_sq_var <- stats::var(tau_sq_samples)
+      result$local_var_samples <- local_var_samples
+      result$tau_sq_samples <- tau_sq_samples
+      result$local_shape <- block$local_shape
+      result$global_scale <- block$global_scale
+    }
+    result
+  })
+  names(eta_result) <- names(blocks)
 
   result <- list(
-    coefficient_mean = colMeans(samples$coefficient_samples),
-    coefficient_cov = stats::cov(samples$coefficient_samples),
+    ETA = eta_result,
     intercept_mean = mean(samples$intercept_samples),
     intercept_var = stats::var(samples$intercept_samples),
     residual_var_mean = mean(samples$residual_var_samples),
     residual_var_var = stats::var(samples$residual_var_samples),
-    coefficient_samples = samples$coefficient_samples,
     intercept_samples = samples$intercept_samples,
     residual_var_samples = samples$residual_var_samples
   )
-  if (coefficient_prior == "spike_slab") {
-    result$inclusion_probability <- colMeans(samples$inclusion_samples)
-    result$pi_mean <- mean(samples$pi_samples)
-    result$pi_var <- stats::var(samples$pi_samples)
-    result$inclusion_samples <- samples$inclusion_samples
-    result$pi_samples <- samples$pi_samples
-  }
-  if (coefficient_prior == "global_local") {
-    result$local_var_mean <- colMeans(samples$local_var_samples)
-    result$local_var_var <- apply(
-      samples$local_var_samples,
-      2L,
-      stats::var
-    )
-    result$tau_sq_mean <- mean(samples$tau_sq_samples)
-    result$tau_sq_var <- stats::var(samples$tau_sq_samples)
-    result$local_var_samples <- samples$local_var_samples
-    result$tau_sq_samples <- samples$tau_sq_samples
-    result$local_shape <- local_shape
-  }
   if (nchains > 1L) {
     result$nchains <- nchains
     result$chain_id <- samples$chain_id

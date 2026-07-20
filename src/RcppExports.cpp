@@ -25,8 +25,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // blm_gibbs_rcpp_cpp
-Rcpp::List blm_gibbs_rcpp_cpp(const Rcpp::NumericVector& y, const Rcpp::NumericMatrix& X, const Rcpp::NumericVector& prior_var, const double residual_shape, const double residual_scale, const int iterations, const int burnin, const int thin, const Rcpp::Function& progress_callback, const bool use_spike_slab, const bool use_global_local, const double pi_alpha, const double pi_beta, const double global_scale, const double local_a, const double local_b, const bool learn_residual_var, const double fixed_residual_var);
-RcppExport SEXP _blm_blm_gibbs_rcpp_cpp(SEXP ySEXP, SEXP XSEXP, SEXP prior_varSEXP, SEXP residual_shapeSEXP, SEXP residual_scaleSEXP, SEXP iterationsSEXP, SEXP burninSEXP, SEXP thinSEXP, SEXP progress_callbackSEXP, SEXP use_spike_slabSEXP, SEXP use_global_localSEXP, SEXP pi_alphaSEXP, SEXP pi_betaSEXP, SEXP global_scaleSEXP, SEXP local_aSEXP, SEXP local_bSEXP, SEXP learn_residual_varSEXP, SEXP fixed_residual_varSEXP) {
+Rcpp::List blm_gibbs_rcpp_cpp(const Rcpp::NumericVector& y, const Rcpp::NumericMatrix& X, const Rcpp::NumericVector& prior_var, const double residual_shape, const double residual_scale, const int iterations, const int burnin, const int thin, const Rcpp::Function& progress_callback, const Rcpp::IntegerVector& block_id, const Rcpp::IntegerVector& block_model, const Rcpp::NumericVector& pi_alpha, const Rcpp::NumericVector& pi_beta, const Rcpp::NumericVector& global_scale, const Rcpp::NumericVector& local_a, const Rcpp::NumericVector& local_b, const bool learn_residual_var, const double fixed_residual_var);
+RcppExport SEXP _blm_blm_gibbs_rcpp_cpp(SEXP ySEXP, SEXP XSEXP, SEXP prior_varSEXP, SEXP residual_shapeSEXP, SEXP residual_scaleSEXP, SEXP iterationsSEXP, SEXP burninSEXP, SEXP thinSEXP, SEXP progress_callbackSEXP, SEXP block_idSEXP, SEXP block_modelSEXP, SEXP pi_alphaSEXP, SEXP pi_betaSEXP, SEXP global_scaleSEXP, SEXP local_aSEXP, SEXP local_bSEXP, SEXP learn_residual_varSEXP, SEXP fixed_residual_varSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -39,16 +39,16 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const int >::type burnin(burninSEXP);
     Rcpp::traits::input_parameter< const int >::type thin(thinSEXP);
     Rcpp::traits::input_parameter< const Rcpp::Function& >::type progress_callback(progress_callbackSEXP);
-    Rcpp::traits::input_parameter< const bool >::type use_spike_slab(use_spike_slabSEXP);
-    Rcpp::traits::input_parameter< const bool >::type use_global_local(use_global_localSEXP);
-    Rcpp::traits::input_parameter< const double >::type pi_alpha(pi_alphaSEXP);
-    Rcpp::traits::input_parameter< const double >::type pi_beta(pi_betaSEXP);
-    Rcpp::traits::input_parameter< const double >::type global_scale(global_scaleSEXP);
-    Rcpp::traits::input_parameter< const double >::type local_a(local_aSEXP);
-    Rcpp::traits::input_parameter< const double >::type local_b(local_bSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type block_id(block_idSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type block_model(block_modelSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type pi_alpha(pi_alphaSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type pi_beta(pi_betaSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type global_scale(global_scaleSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type local_a(local_aSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type local_b(local_bSEXP);
     Rcpp::traits::input_parameter< const bool >::type learn_residual_var(learn_residual_varSEXP);
     Rcpp::traits::input_parameter< const double >::type fixed_residual_var(fixed_residual_varSEXP);
-    rcpp_result_gen = Rcpp::wrap(blm_gibbs_rcpp_cpp(y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, use_spike_slab, use_global_local, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var));
+    rcpp_result_gen = Rcpp::wrap(blm_gibbs_rcpp_cpp(y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, block_id, block_model, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var));
     return rcpp_result_gen;
 END_RCPP
 }

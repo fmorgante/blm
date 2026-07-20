@@ -6,15 +6,8 @@
 \usage{
 multiple_blm(
   y,
-  X,
-  prior_var = NULL,
+  ETA,
   residual_var = NULL,
-  coefficient_prior = c("normal", "spike_slab", "global_local"),
-  pi_alpha = 1,
-  pi_beta = 1,
-  local_shape = c(a = 1, b = 0.5),
-  global_scale = 1,
-  standardize = TRUE,
   residual_shape = NULL,
   residual_scale = NULL,
   iterations = 4000L,
@@ -27,127 +20,82 @@ multiple_blm(
 )
 }
 \arguments{
-\item{y}{A numeric vector containing the response values.}
+\item{y}{A finite numeric response vector.}
 
-\item{X}{A numeric matrix or data frame with observations in rows and
-predictors in columns.}
+\item{ETA}{A predictor specification or list of predictor specifications.
+Each block must contain \code{X} and \code{model}. Available models are
+\code{"Normal"}, \code{"SpikeSlab"}, and \code{"GlobalLocal"}. See Details.}
 
-\item{prior_var}{For the normal and spike-and-slab priors, a positive numeric
-scalar giving a common prior variance
-for all coefficients, or a positive numeric vector with one variance per
-predictor. Must be \code{NULL} for the global-local prior.}
+\item{residual_var}{A positive known residual variance, or \code{NULL} to learn
+it using an inverse-gamma prior.}
 
-\item{coefficient_prior}{The coefficient-prior family: \code{"normal"},
-\code{"spike_slab"}, or \code{"global_local"}. The global-local family uses
-beta-prime local variances and learns a shared global variance.}
+\item{residual_shape, residual_scale}{Positive shape and scale parameters for
+the inverse-gamma residual-variance prior. Required when
+\code{residual_var = NULL}.}
 
-\item{pi_alpha, pi_beta}{Positive shape parameters for the Beta prior on the
-shared inclusion probability \eqn{\pi}. Used with the spike-and-slab prior.}
+\item{iterations}{Total Gibbs iterations when sampling is required.}
 
-\item{local_shape}{A positive numeric vector of length two containing the
-beta-prime shape parameters \code{a} and \code{b}. The default
-\code{c(1, 0.5)} gives the Strawderman-Berger prior; \code{c(0.5, 0.5)} gives
-the horseshoe prior. Used with the global-local prior.}
+\item{burnin}{Number of initial iterations to discard.}
 
-\item{global_scale}{A positive numeric scalar giving the scale of the
-half-Cauchy prior on the global standard deviation \eqn{\tau}. The global
-variance \eqn{\tau^2} is learned from the data. Used with the global-local
-prior.}
+\item{thin}{Interval between retained draws.}
 
-\item{standardize}{A logical scalar. If \code{TRUE}, the predictors are centered
-and scaled before fitting. Coefficients and intercepts are always returned on
-the original predictor scale.}
+\item{seed}{\code{NULL} or an integer random-number seed.}
 
-\item{residual_var}{A positive numeric scalar giving the known residual
-variance, or \code{NULL} to learn it from the data.}
+\item{version}{Gibbs implementation: \code{"Rcpp"} or \code{"R"}.}
 
-\item{residual_shape}{A positive numeric scalar giving the shape of the
-inverse-gamma prior. Required when \code{residual_var = NULL}.}
+\item{verbose}{If \code{TRUE}, display aggregate progress at 10-percent
+intervals per chain using
+\code{\link[progressr:with_progress]{progressr::with_progress()}}.}
 
-\item{residual_scale}{A positive numeric scalar giving the scale of the
-inverse-gamma prior. Required when \code{residual_var = NULL}.}
-
-\item{iterations}{A positive integer giving the total number of Gibbs
-iterations when Gibbs sampling is used.}
-
-\item{burnin}{A non-negative integer giving the number of initial Gibbs
-iterations to discard.}
-
-\item{thin}{A positive integer giving the interval between retained draws.}
-
-\item{seed}{\code{NULL} or an integer used to initialize the random-number
-generator.}
-
-\item{version}{The Gibbs-sampler implementation to use: \code{"Rcpp"} for the
-compiled C++ implementation or \code{"R"} for the reference R implementation.}
-
-\item{verbose}{A logical scalar. If \code{TRUE}, display aggregate Gibbs
-progress using \code{\link[progressr:with_progress]{progressr::with_progress()}},
-updated every 10 percent per chain.}
-
-\item{nchains}{A positive integer giving the number of independent MCMC
-chains. Values greater than one run chains in parallel using a temporary
-\code{future::multisession} plan.}
+\item{nchains}{Number of independent chains. Multiple chains use a temporary
+\code{\link[future:multisession]{future::multisession}} plan.}
 }
 \value{
-A named list containing \code{coefficient_mean}, \code{coefficient_cov},
-\code{intercept_mean}, and \code{intercept_var}. When the model is sampled,
-the list additionally contains \code{residual_var_mean},
-\code{residual_var_var}, \code{coefficient_samples}, \code{intercept_samples},
-and \code{residual_var_samples}. With the spike-and-slab prior, the list also
-contains \code{inclusion_probability}, \code{pi_mean}, \code{pi_var},
-\code{inclusion_samples}, and \code{pi_samples}. With the global-local prior,
-it also contains \code{local_var_mean}, \code{local_var_var},
-\code{tau_sq_mean}, \code{tau_sq_var}, \code{local_var_samples},
-\code{tau_sq_samples}, and \code{local_shape}. These variance parameters refer
-to the internally standardized coefficient scale when
-\code{standardize = TRUE}. When
-\code{nchains > 1},
-retained draws are combined across chains and the result additionally contains
-\code{nchains} and a corresponding \code{chain_id} for each draw.
+A list containing \code{ETA}, a named list of block-specific posterior
+summaries, plus intercept and residual-variance summaries. Sampled fits also
+contain intercept and residual-variance draws. With multiple chains,
+\code{chain_id} identifies the origin of each retained draw.
 }
 \description{
-Computes posterior distributions for the coefficients and intercept in a
-multiple linear regression. The intercept is integrated out by centering the
-response and every predictor. The residual variance can be fixed or learned
-using an inverse-gamma prior and Gibbs sampling.
+Fits one or more linear-predictor blocks with block-specific coefficient
+priors. Predictor matrices, standardization, and prior parameters are
+specified through a BGLR-style \code{ETA} list. The intercept is integrated out
+during coefficient sampling by centering the response and predictors.
 }
 \details{
-With known residual variance, the coefficients have independent zero-mean
-normal priors with variances given by \code{prior_var}. These priors are
-independent of the inverse-gamma residual-variance prior. Posterior summaries
-are computed from retained Gibbs draws when the residual variance is learned.
-During each Gibbs sweep, coefficients are updated one at a time from their
-univariate conditional normal distributions. For the spike-and-slab prior,
-inclusion indicators are sampled using the coefficient-marginalized
-conditional odds, and the shared inclusion probability is updated from its
-full conditional Beta distribution.
-The global-local hierarchy is
-\deqn{\beta_j \mid \tau^2, \psi_j \sim N(0, \tau^2\psi_j),}
-\deqn{\psi_j \sim \mathrm{BetaPrime}(a,b), \qquad
-\tau \sim C^+(0, \mathrm{global\_scale}).}
-The local variances are updated from generalized inverse Gaussian full
-conditionals, and \eqn{\tau^2} is updated from its inverse-gamma full
-conditional. This coefficient prior is independent of the residual variance.
-Global-local fits use Gibbs sampling even when \code{residual_var} is known.
-When \code{standardize = TRUE}, \code{prior_var} and \code{global_scale}
-describe the coefficient scale after predictor standardization. All returned
-regression coefficients, their covariance matrix, and intercept quantities are
-transformed to the scale of the supplied \code{X}.
+\code{ETA} may be a single-block shorthand such as
+\code{list(X = X, model = "Normal", var = 10)}, or a named list of blocks.
+Every block accepts \code{standardize}, which defaults to \code{TRUE}. Returned
+coefficients are always transformed to the original scale of that block's
+supplied \code{X}.
+
+A \code{"Normal"} block requires \code{var}, a scalar or one value per
+predictor. A \code{"SpikeSlab"} block requires \code{var}, optionally accepts
+\code{pi = c(a = 1, b = 1)}, and requires the residual variance to be learned.
+A \code{"GlobalLocal"} block optionally accepts
+\code{local_shape = c(a = 1, b = 0.5)} and \code{global_scale = 1}. Its
+hierarchy is
+\deqn{\beta_j \mid \tau^2,\psi_j \sim N(0,\tau^2\psi_j),\qquad
+\psi_j \sim \mathrm{BetaPrime}(a,b),}
+with \eqn{\tau \sim C^+(0,\mathrm{global\_scale})}. Thus the default is
+Strawderman-Berger, while \code{local_shape = c(0.5, 0.5)} gives the horseshoe.
+The coefficient priors are independent of the residual variance.
 }
 \examples{
-X <- cbind(x1 = 1:5, x2 = c(0, 1, 0, 1, 0))
-y <- 1 + 2 * X[, "x1"] - 3 * X[, "x2"]
-multiple_blm(y, X, prior_var = 10, residual_var = 1)
+X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))
+y <- 1 + 2 * X[, "x1"] - X[, "x2"]
 multiple_blm(
-  y, X,
-  coefficient_prior = "global_local",
-  local_shape = c(a = 1, b = 0.5),
+  y,
+  ETA = list(X = X, model = "Normal", var = 10),
+  residual_var = 1
+)
+multiple_blm(
+  y,
+  ETA = list(markers = list(X = X, model = "GlobalLocal")),
   residual_shape = 2,
   residual_scale = 1,
-  seed = 123,
-  version = "Rcpp",
-  verbose = FALSE,
-  nchains = 1
+  iterations = 100,
+  burnin = 50,
+  seed = 123
 )
 }

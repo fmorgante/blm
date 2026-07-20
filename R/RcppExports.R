@@ -5,7 +5,7 @@ draw_gig_rcpp_cpp <- function(n, lambda, chi, psi) {
     .Call(`_blm_draw_gig_rcpp_cpp`, n, lambda, chi, psi)
 }
 
-blm_gibbs_rcpp_cpp <- function(y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, use_spike_slab, use_global_local, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var) {
-    .Call(`_blm_blm_gibbs_rcpp_cpp`, y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, use_spike_slab, use_global_local, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var)
+blm_gibbs_rcpp_cpp <- function(y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, block_id, block_model, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var) {
+    .Call(`_blm_blm_gibbs_rcpp_cpp`, y, X, prior_var, residual_shape, residual_scale, iterations, burnin, thin, progress_callback, block_id, block_model, pi_alpha, pi_beta, global_scale, local_a, local_b, learn_residual_var, fixed_residual_var)
 }
 
