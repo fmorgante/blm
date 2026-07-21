@@ -7,8 +7,7 @@
 assess_convergence(fit, plot = TRUE)
 }
 \arguments{
-\item{fit}{A sampled fit returned by \code{\link[=blm]{blm()}}. Analytical Normal
-fits do not contain samples and cannot be assessed.}
+\item{fit}{A sampled fit returned by \code{\link[=blm]{blm()}}.}
 
 \item{plot}{A logical scalar indicating whether to draw trace plots for the
 assessed parameters.}
@@ -17,21 +16,26 @@ assessed parameters.}
 A named list containing \code{rhat}, a named vector of classical
 Gelman-Rubin statistics; \code{geweke}, a parameter-by-chain matrix of Geweke
 z-scores; \code{effective_sample_size}, a named vector; \code{nchains}; and
-\code{draws_per_chain}. R-hat is \code{NA} for single-chain fits and parameters
-with zero within-chain variance.
+\code{draws_per_chain}. Rows and names identify blocks where applicable.
+R-hat is \code{NA} for single-chain fits and parameters with zero
+within-chain variance.
 }
 \description{
 Produces trace plots and computes convergence diagnostics for the retained
-intercept and residual-variance draws in a sampled fit returned by
-\code{\link[=blm]{blm()}}. Each spike-and-slab ETA block's inclusion probability
-\code{pi} is also assessed when present.
+non-coefficient draws in a sampled fit returned by \code{\link[=blm]{blm()}}. These include
+the intercept and residual variance; the shared coefficient variance for
+each normal block; the inclusion probability and slab variance for each
+spike-and-slab block; and the global variance for each global-local block.
+All per-predictor quantities, including regression coefficients, local
+variances, and spike-and-slab inclusion indicators, are intentionally
+excluded.
 }
 \examples{
 X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))
 y <- 1 + 2 * X[, "x1"] - X[, "x2"]
 fit <- blm(
   y,
-  ETA = list(X = X, model = "Normal", var = 10),
+  ETA = list(X = X, model = "Normal", var_shape = 2, var_scale = 10),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 100,

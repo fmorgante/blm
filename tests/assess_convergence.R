@@ -2,20 +2,29 @@ library(BayesLinReg)
 
 X <- cbind(
   first = 1:20,
-  second = rep(c(0, 1), 10)
+  second = rep(c(0, 1), 10),
+  third = sin(seq_len(20)),
+  fourth = cos(seq_len(20))
 )
 y <- 1 + 2 * X[, "first"] - X[, "second"]
 
+diagnostic_eta <- list(
+  normal = list(
+    X = X[, "first", drop = FALSE], model = "Normal",
+    var_shape = 2, var_scale = 10
+  ),
+  selection = list(
+    X = X[, "second", drop = FALSE], model = "SpikeSlab",
+    slab_shape = 2, slab_scale = 10
+  ),
+  shrinkage = list(
+    X = X[, c("third", "fourth")], model = "GlobalLocal"
+  )
+)
+
 fit_one <- blm(
   y,
-  ETA = list(
-    normal = list(
-      X = X[, "first", drop = FALSE], model = "Normal", var = 10
-    ),
-    selection = list(
-      X = X[, "second", drop = FALSE], model = "SpikeSlab", var = 10
-    )
-  ),
+  ETA = diagnostic_eta,
   residual_shape = 2,
   residual_scale = 1,
   iterations = 100,
@@ -25,14 +34,7 @@ fit_one <- blm(
 )
 fit_two <- blm(
   y,
-  ETA = list(
-    normal = list(
-      X = X[, "first", drop = FALSE], model = "Normal", var = 10
-    ),
-    selection = list(
-      X = X[, "second", drop = FALSE], model = "SpikeSlab", var = 10
-    )
-  ),
+  ETA = diagnostic_eta,
   residual_shape = 2,
   residual_scale = 1,
   iterations = 100,
@@ -52,6 +54,18 @@ combined_fit$ETA$selection$pi_samples <- c(
   fit_one$ETA$selection$pi_samples,
   fit_two$ETA$selection$pi_samples
 )
+combined_fit$ETA$normal$normal_var_samples <- c(
+  fit_one$ETA$normal$normal_var_samples,
+  fit_two$ETA$normal$normal_var_samples
+)
+combined_fit$ETA$selection$slab_var_samples <- c(
+  fit_one$ETA$selection$slab_var_samples,
+  fit_two$ETA$selection$slab_var_samples
+)
+combined_fit$ETA$shrinkage$tau_sq_samples <- c(
+  fit_one$ETA$shrinkage$tau_sq_samples,
+  fit_two$ETA$shrinkage$tau_sq_samples
+)
 combined_fit$intercept_samples <- c(
   fit_one$intercept_samples,
   fit_two$intercept_samples
@@ -64,7 +78,12 @@ combined_fit$chain_id <- rep.int(1:2, c(60L, 60L))
 
 diagnostics <- assess_convergence(combined_fit, plot = FALSE)
 expected_parameters <- c(
-  "intercept", "residual_var", "pi_selection"
+  "intercept",
+  "residual_var",
+  "normal_var_normal",
+  "pi_selection",
+  "slab_var_selection",
+  "tau_sq_shrinkage"
 )
 stopifnot(
   identical(names(diagnostics), c(
@@ -72,7 +91,7 @@ stopifnot(
     "draws_per_chain"
   )),
   identical(names(diagnostics$rhat), expected_parameters),
-  identical(dim(diagnostics$geweke), c(3L, 2L)),
+  identical(dim(diagnostics$geweke), c(6L, 2L)),
   identical(rownames(diagnostics$geweke), expected_parameters),
   identical(
     names(diagnostics$effective_sample_size),
@@ -81,7 +100,8 @@ stopifnot(
   diagnostics$nchains == 2L,
   diagnostics$draws_per_chain == 60L,
   all(is.finite(diagnostics$rhat)),
-  all(diagnostics$effective_sample_size > 0)
+  all(diagnostics$effective_sample_size > 0),
+  !any(grepl("coefficient|inclusion|local_var|::", expected_parameters))
 )
 
 # Trace plotting covers every assessed parameter.
@@ -99,11 +119,14 @@ stopifnot(
 
 known_fit <- blm(
   y,
-  ETA = list(X = X, model = "Normal", var = 10),
-  residual_var = 1
+  ETA = list(X = X, model = "Normal", var_shape = 2, var_scale = 10),
+  residual_var = 1,
+  iterations = 100,
+  burnin = 40,
+  seed = 103
 )
 stopifnot(
-  inherits(try(assess_convergence(known_fit), silent = TRUE), "try-error"),
+  assess_convergence(known_fit, plot = FALSE)$nchains == 1L,
   inherits(
     try(assess_convergence(fit_one, plot = NA), silent = TRUE),
     "try-error"
