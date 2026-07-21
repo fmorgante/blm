@@ -1,14 +1,15 @@
-#' Bayesian multiple linear regression
+#' Bayesian linear regression
 #'
-#' Fits one or more linear-predictor blocks with block-specific coefficient
-#' priors. Predictor matrices, standardization, and prior parameters are
-#' specified through a BGLR-style `ETA` list. The intercept is integrated out
-#' during coefficient sampling by centering the response and predictors.
+#' Fits a Bayesian linear regression with one or more predictor blocks using a
+#' BGLR-style `ETA` interface. Each block specifies its predictors,
+#' coefficient-prior family, standardization, and prior parameters. The
+#' intercept is integrated out during coefficient sampling by centering the
+#' response and predictors.
 #'
 #' @param y A finite numeric response vector.
-#' @param ETA A predictor specification or list of predictor specifications.
-#'   Each block must contain `X` and `model`. Available models are `"Normal"`,
-#'   `"SpikeSlab"`, and `"GlobalLocal"`. See Details.
+#' @param ETA A predictor specification or named list of predictor
+#'   specifications. Each block must contain `X` and `model`. Available models
+#'   are `"Normal"`, `"SpikeSlab"`, and `"GlobalLocal"`. See Details.
 #' @param residual_var A positive known residual variance, or `NULL` to learn
 #'   it using an inverse-gamma prior.
 #' @param residual_shape,residual_scale Positive shape and scale parameters for
@@ -29,8 +30,10 @@
 #'   also contain intercept and residual-variance draws. With multiple chains,
 #'   `chain_id` identifies the origin of each retained draw.
 #'
-#' @details `ETA` may be a single-block shorthand such as
+#' @details `ETA` may be a single-block specification such as
 #'   `list(X = X, model = "Normal", var = 10)`, or a named list of blocks.
+#'   A numeric vector supplied as a block's `X` is treated as a one-column
+#'   matrix.
 #'   Every block accepts `standardize`, which defaults to `TRUE`. Returned
 #'   coefficients are always transformed to the original scale of that block's
 #'   supplied `X`.
@@ -50,12 +53,12 @@
 #' @examples
 #' X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))
 #' y <- 1 + 2 * X[, "x1"] - X[, "x2"]
-#' multiple_blm(
+#' blm(
 #'   y,
 #'   ETA = list(X = X, model = "Normal", var = 10),
 #'   residual_var = 1
 #' )
-#' multiple_blm(
+#' blm(
 #'   y,
 #'   ETA = list(markers = list(X = X, model = "GlobalLocal")),
 #'   residual_shape = 2,
@@ -64,11 +67,11 @@
 #'   burnin = 50,
 #'   seed = 123
 #' )
-multiple_blm <- function(y, ETA, residual_var = NULL,
-                         residual_shape = NULL, residual_scale = NULL,
-                         iterations = 4000L, burnin = 1000L, thin = 1L,
-                         seed = NULL, version = c("Rcpp", "R"),
-                         verbose = FALSE, nchains = 1L) {
+blm <- function(y, ETA, residual_var = NULL,
+                residual_shape = NULL, residual_scale = NULL,
+                iterations = 4000L, burnin = 1000L, thin = 1L,
+                seed = NULL, version = c("Rcpp", "R"),
+                verbose = FALSE, nchains = 1L) {
   version <- match.arg(version)
   nchains <- .validate_nchains(nchains)
   if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {

@@ -1,14 +1,24 @@
 Package: BayesLinReg
-Title: What the Package Does (One Line, Title Case)
+Title: Bayesian Linear Regression with Flexible Coefficient Priors
 Version: 6.0.1
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+Authors@R:
+    person(
+        "Fabio", "Morgante",
+        email = "fabiom@clemson.edu",
+        role = c("aut", "cre")
+    )
+Description: Fits Bayesian linear regression models with one or more predictor
+    blocks. Coefficients can be assigned independent normal, spike-and-slab,
+    or beta-prime global-local priors, including Strawderman-Berger and
+    horseshoe specifications. Supports known or inverse-gamma-modeled residual
+    variance, analytical updating for conjugate normal models, Gibbs sampling
+    implemented in R or 'Rcpp', optional parallel chains, predictor
+    standardization, and convergence diagnostics.
+License: BSD_3_clause + file LICENSE
+URL: https://github.com/fmorgante/BayesLinReg
+BugReports: https://github.com/fmorgante/BayesLinReg/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.0.0
 Imports:
     coda,
     future,
@@ -18,3 +28,4 @@ Imports:
 LinkingTo:
     GIGrvg,
     Rcpp
+Config/roxygen2/version: 8.0.0

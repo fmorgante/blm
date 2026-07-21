@@ -2,10 +2,10 @@
 #'
 #' Produces trace plots and computes convergence diagnostics for the retained
 #' intercept and residual-variance draws in a sampled fit returned by
-#' [multiple_blm()]. Each spike-and-slab ETA block's inclusion probability
+#' [blm()]. Each spike-and-slab ETA block's inclusion probability
 #' `pi` is also assessed when present.
 #'
-#' @param fit A sampled fit returned by [multiple_blm()]. Analytical Normal
+#' @param fit A sampled fit returned by [blm()]. Analytical Normal
 #'   fits do not contain samples and cannot be assessed.
 #' @param plot A logical scalar indicating whether to draw trace plots for the
 #'   assessed parameters.
@@ -20,7 +20,7 @@
 #' @examples
 #' X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))
 #' y <- 1 + 2 * X[, "x1"] - X[, "x2"]
-#' fit <- multiple_blm(
+#' fit <- blm(
 #'   y,
 #'   ETA = list(X = X, model = "Normal", var = 10),
 #'   residual_shape = 2,

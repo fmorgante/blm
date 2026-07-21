@@ -10,8 +10,8 @@ normal_eta <- function(X, var = 10, standardize = TRUE) {
   list(X = X, model = "Normal", var = var, standardize = standardize)
 }
 
-# The single-block shorthand supports analytical Normal fits.
-known_fit <- multiple_blm(
+# A single block supports analytical Normal fits.
+known_fit <- blm(
   y,
   ETA = normal_eta(x, standardize = FALSE),
   residual_var = 1
@@ -36,14 +36,19 @@ stopifnot(
 )
 
 # Scalar and predictor-specific variances are equivalent when repeated.
-vector_fit <- multiple_blm(
+vector_fit <- blm(
   y,
-  ETA = normal_eta(x, var = c(10, 10), standardize = FALSE),
+  ETA = list(
+    X = x, model = "Normal", var = c(10, 10), standardize = FALSE
+  ),
   residual_var = 1
 )
-data_frame_fit <- multiple_blm(
+data_frame_fit <- blm(
   y,
-  ETA = normal_eta(as.data.frame(x), standardize = FALSE),
+  ETA = list(
+    X = as.data.frame(x), model = "Normal", var = 10,
+    standardize = FALSE
+  ),
   residual_var = 1
 )
 stopifnot(
@@ -51,11 +56,17 @@ stopifnot(
   isTRUE(all.equal(known_fit, data_frame_fit))
 )
 
-# With one predictor and no standardization, multiple_blm agrees with
-# simple_blm.
+# A predictor vector and a one-column matrix use the same fitting engine.
 simple_y <- 1 + 2 * x[, "first"]
-simple_fit <- simple_blm(simple_y, x[, "first"], 10, residual_var = 1)
-one_predictor_fit <- multiple_blm(
+simple_fit <- blm(
+  simple_y,
+  ETA = list(
+    X = x[, "first"], model = "Normal", var = 10,
+    standardize = FALSE
+  ),
+  residual_var = 1
+)
+one_predictor_fit <- blm(
   simple_y,
   ETA = normal_eta(x[, "first", drop = FALSE], standardize = FALSE),
   residual_var = 1
@@ -63,11 +74,11 @@ one_predictor_fit <- multiple_blm(
 stopifnot(
   isTRUE(all.equal(
     unname(one_predictor_fit$ETA$ETA1$coefficient_mean),
-    simple_fit$slope_mean
+    unname(simple_fit$ETA$ETA1$coefficient_mean)
   )),
   isTRUE(all.equal(
     drop(one_predictor_fit$ETA$ETA1$coefficient_cov),
-    simple_fit$slope_var
+    drop(simple_fit$ETA$ETA1$coefficient_cov)
   )),
   isTRUE(all.equal(one_predictor_fit$intercept_mean, simple_fit$intercept_mean)),
   isTRUE(all.equal(one_predictor_fit$intercept_var, simple_fit$intercept_var))
@@ -77,12 +88,12 @@ stopifnot(
 # original predictor scale.
 predictor_sd <- apply(x, 2L, stats::sd)
 working_x <- sweep(x, 2L, predictor_sd, FUN = "/")
-manual_fit <- multiple_blm(
+manual_fit <- blm(
   y,
   ETA = normal_eta(working_x, standardize = FALSE),
   residual_var = 1
 )
-automatic_fit <- multiple_blm(y, ETA = normal_eta(x), residual_var = 1)
+automatic_fit <- blm(y, ETA = normal_eta(x), residual_var = 1)
 stopifnot(
   isTRUE(all.equal(
     automatic_fit$ETA$ETA1$coefficient_mean,
@@ -97,7 +108,7 @@ stopifnot(
 )
 
 # Learned residual variance uses Gibbs sampling and remains reproducible.
-learned_fit <- multiple_blm(
+learned_fit <- blm(
   y,
   ETA = normal_eta(x),
   residual_shape = 2,
@@ -107,7 +118,7 @@ learned_fit <- multiple_blm(
   thin = 2,
   seed = 42
 )
-repeated_fit <- multiple_blm(
+repeated_fit <- blm(
   y,
   ETA = normal_eta(x),
   residual_shape = 2,
@@ -128,7 +139,7 @@ stopifnot(
 )
 
 # The R and Rcpp implementations target the same Normal posterior.
-r_fit <- multiple_blm(
+r_fit <- blm(
   y,
   ETA = normal_eta(x),
   residual_shape = 2,
@@ -176,8 +187,8 @@ multi_eta <- list(
     global_scale = 0.5
   )
 )
-multi_rcpp <- multiple_blm(
-  multi_y, multi_eta,
+multi_rcpp <- blm(
+  multi_y, ETA = multi_eta,
   residual_shape = 2,
   residual_scale = 1,
   iterations = 1200,
@@ -186,8 +197,8 @@ multi_rcpp <- multiple_blm(
   seed = 77,
   version = "Rcpp"
 )
-multi_r <- multiple_blm(
-  multi_y, multi_eta,
+multi_r <- blm(
+  multi_y, ETA = multi_eta,
   residual_shape = 2,
   residual_scale = 1,
   iterations = 1200,
@@ -218,12 +229,9 @@ stopifnot(
 )
 
 # GlobalLocal defaults to Strawderman-Berger and can recover the horseshoe.
-global_eta <- list(
-  X = multi_X,
-  model = "GlobalLocal"
-)
-global_fit <- multiple_blm(
-  multi_y, global_eta,
+global_fit <- blm(
+  multi_y,
+  ETA = list(X = multi_X, model = "GlobalLocal"),
   residual_shape = 2,
   residual_scale = 1,
   iterations = 1000,
@@ -231,7 +239,7 @@ global_fit <- multiple_blm(
   thin = 2,
   seed = 109
 )
-horseshoe_fit <- multiple_blm(
+horseshoe_fit <- blm(
   multi_y,
   ETA = list(
     X = multi_X,
@@ -250,6 +258,27 @@ stopifnot(
   identical(horseshoe_fit$ETA$ETA1$local_shape, c(a = 0.5, b = 0.5)),
   all(horseshoe_fit$residual_var_samples == 0.25),
   identical(horseshoe_fit$residual_var_var, 0)
+)
+
+# A single SpikeSlab block accepts a vector or matrix of predictors.
+spike_fit <- blm(
+  multi_y,
+  ETA = list(
+    X = multi_X[, c("signal", "noise1")],
+    model = "SpikeSlab",
+    var = 10,
+    pi = c(a = 1, b = 2)
+  ),
+  residual_shape = 2,
+  residual_scale = 1,
+  iterations = 500,
+  burnin = 200,
+  seed = 111
+)
+stopifnot(
+  identical(spike_fit$ETA$ETA1$model, "SpikeSlab"),
+  identical(spike_fit$ETA$ETA1$pi, c(a = 1, b = 2)),
+  identical(dim(spike_fit$ETA$ETA1$coefficient_samples), c(300L, 2L))
 )
 
 # The R and Rcpp GIG entry points match a known moment and challenging cases.
@@ -330,8 +359,8 @@ parallel_test_flags <- Sys.getenv(c(
   "BLM_TEST_FUTURE"
 ))
 if (any(parallel_test_flags == "true")) {
-  parallel_fit <- multiple_blm(
-    multi_y, multi_eta,
+  parallel_fit <- blm(
+    multi_y, ETA = multi_eta,
     residual_shape = 2,
     residual_scale = 1,
     iterations = 100,
@@ -340,8 +369,8 @@ if (any(parallel_test_flags == "true")) {
     nchains = 2,
     verbose = TRUE
   )
-  repeated_parallel_fit <- multiple_blm(
-    multi_y, multi_eta,
+  repeated_parallel_fit <- blm(
+    multi_y, ETA = multi_eta,
     residual_shape = 2,
     residual_scale = 1,
     iterations = 100,
@@ -361,31 +390,35 @@ if (any(parallel_test_flags == "true")) {
 
 # Invalid ETA specifications and model parameters are rejected.
 invalid_calls <- list(
-  function() multiple_blm(y, ETA = list(), residual_var = 1),
-  function() multiple_blm(y, ETA = list(X = x), residual_var = 1),
-  function() multiple_blm(
+  function() blm(y, residual_var = 1),
+  function() blm(
+    y, ETA = normal_eta(x), X = x, residual_var = 1
+  ),
+  function() blm(y, ETA = list(), residual_var = 1),
+  function() blm(y, ETA = list(X = x), residual_var = 1),
+  function() blm(
     y, ETA = list(X = x, model = "normal", var = 10), residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y, ETA = list(X = x, model = "Normal", prior_var = 10), residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y, ETA = list(X = x, model = "Normal"), residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y, ETA = list(X = x, model = "Normal", var = 0), residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y,
     ETA = list(X = cbind(x, constant = 1), model = "Normal", var = 10),
     residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y,
     ETA = list(X = x, model = "SpikeSlab", var = 10),
     residual_var = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y,
     ETA = list(
       X = x, model = "SpikeSlab", var = 10, pi_alpha = 1, pi_beta = 1
@@ -393,13 +426,13 @@ invalid_calls <- list(
     residual_shape = 2,
     residual_scale = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y,
     ETA = list(X = x, model = "SpikeSlab", var = 10, pi = c(1, 0)),
     residual_shape = 2,
     residual_scale = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y,
     ETA = list(
       X = x, model = "GlobalLocal", local_shape = c(1, 0)
@@ -407,11 +440,11 @@ invalid_calls <- list(
     residual_shape = 2,
     residual_scale = 1
   ),
-  function() multiple_blm(
+  function() blm(
     y, ETA = normal_eta(x), residual_shape = 2, residual_scale = 1,
     nchains = 0
   ),
-  function() multiple_blm(
+  function() blm(
     y, ETA = normal_eta(x), residual_var = 1, residual_shape = 2
   )
 )

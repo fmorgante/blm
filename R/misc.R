@@ -254,7 +254,9 @@
 }
 
 .as_predictor_matrix <- function(x, number_of_observations) {
-  if (is.data.frame(x)) {
+  if (is.numeric(x) && is.atomic(x) && !is.object(x) && is.null(dim(x))) {
+    x <- matrix(as.numeric(x), ncol = 1L, dimnames = list(NULL, "x"))
+  } else if (is.data.frame(x)) {
     if (ncol(x) < 1L || !all(vapply(x, is.numeric, logical(1)))) {
       stop("`X` must contain at least one numeric predictor.", call. = FALSE)
     }
@@ -733,7 +735,7 @@
   required <- c("ETA", "intercept_samples", "residual_var_samples")
   if (!is.list(fit) || !all(required %in% names(fit))) {
     stop(
-      "`fit` must be a sampled fit returned by `multiple_blm()`.",
+      "`fit` must be a sampled fit returned by `blm()`.",
       call. = FALSE
     )
   }
@@ -741,7 +743,7 @@
   if (!is.list(fit$ETA) || length(fit$ETA) < 1L ||
       is.null(fit$ETA[[1L]]$coefficient_samples)) {
     stop(
-      "`fit` must contain posterior samples from `multiple_blm()`.",
+      "`fit` must contain posterior samples from `blm()`.",
       call. = FALSE
     )
   }

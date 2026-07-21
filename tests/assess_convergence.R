@@ -6,7 +6,7 @@ X <- cbind(
 )
 y <- 1 + 2 * X[, "first"] - X[, "second"]
 
-fit_one <- multiple_blm(
+fit_one <- blm(
   y,
   ETA = list(
     normal = list(
@@ -23,7 +23,7 @@ fit_one <- multiple_blm(
   seed = 101,
   version = "R"
 )
-fit_two <- multiple_blm(
+fit_two <- blm(
   y,
   ETA = list(
     normal = list(
@@ -97,7 +97,7 @@ stopifnot(
   all(is.na(single_chain_diagnostics$rhat))
 )
 
-known_fit <- multiple_blm(
+known_fit <- blm(
   y,
   ETA = list(X = X, model = "Normal", var = 10),
   residual_var = 1
