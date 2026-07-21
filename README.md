@@ -9,15 +9,45 @@ block controls its own standardization, prior family, and prior parameters,
 while coefficients are always returned on their original scale. Gibbs sampling
 is available in R and Rcpp with optional parallel chains.
 
-`blm()` always receives predictors and coefficient priors through `ETA`. For a
-single predictor block, use the single-block shorthand:
+## Installation
+
+Install the development version from GitHub:
 
 ```r
+install.packages("remotes")
+remotes::install_github("fmorgante/BayesLinReg")
+```
+
+Then load the package with:
+
+```r
+library(BayesLinReg)
+```
+
+## Example
+
+`blm()` always receives predictors and coefficient priors through `ETA`. The
+following example fits a ten-predictor model with normal coefficient priors and
+known residual variance:
+
+```r
+set.seed(123)
+n <- 50
+p <- 10
+X <- matrix(rnorm(n * p), nrow = n, ncol = p)
+colnames(X) <- paste0("x", seq_len(p))
+
+beta <- c(2, -1.5, rep(0, p - 2))
+y <- drop(1 + X %*% beta + rnorm(n))
+
 fit <- blm(
   y,
   ETA = list(X = X, model = "Normal", var = 10),
   residual_var = 1
 )
+
+fit$ETA$ETA1$coefficient_mean
+fit$intercept_mean
 ```
 
 The available models are `"Normal"`, `"SpikeSlab"`, and `"GlobalLocal"`.
