@@ -1,4 +1,4 @@
-library(blm)
+library(BayesLinReg)
 
 fit <- simple_blm(
   y = c(3, 5, 7, 9, 11),

@@ -1,4 +1,4 @@
-library(blm)
+library(BayesLinReg)
 
 X <- cbind(
   first = 1:20,

@@ -660,7 +660,7 @@
     chain_seed <- chain_seeds[[chain]]
     chain_progress <- .chain_progress_callback(progressor, chain, nchains)
     future::future({
-      namespace <- asNamespace("blm")
+      namespace <- asNamespace("BayesLinReg")
       chain_sampler <- if (version == "Rcpp") {
         get(".blm_gibbs_rcpp", envir = namespace)
       } else {

@@ -1,4 +1,4 @@
-Package: blm
+Package: BayesLinReg
 Title: What the Package Does (One Line, Title Case)
 Version: 6.0.1
 Authors@R: 

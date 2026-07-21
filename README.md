@@ -1,4 +1,4 @@
-# blm
+# BayesLinReg
 
 This R package implements Bayesian linear regression with independent normal,
 spike-and-slab, and beta-prime global-local priors on the regression

@@ -12,7 +12,7 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 
 // draw_gig_rcpp_cpp
 Rcpp::NumericVector draw_gig_rcpp_cpp(const int n, const double lambda, const double chi, const double psi);
-RcppExport SEXP _blm_draw_gig_rcpp_cpp(SEXP nSEXP, SEXP lambdaSEXP, SEXP chiSEXP, SEXP psiSEXP) {
+RcppExport SEXP _BayesLinReg_draw_gig_rcpp_cpp(SEXP nSEXP, SEXP lambdaSEXP, SEXP chiSEXP, SEXP psiSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -26,7 +26,7 @@ END_RCPP
 }
 // blm_gibbs_rcpp_cpp
 Rcpp::List blm_gibbs_rcpp_cpp(const Rcpp::NumericVector& y, const Rcpp::NumericMatrix& X, const Rcpp::NumericVector& prior_var, const double residual_shape, const double residual_scale, const int iterations, const int burnin, const int thin, const Rcpp::Function& progress_callback, const Rcpp::IntegerVector& block_id, const Rcpp::IntegerVector& block_model, const Rcpp::NumericVector& pi_alpha, const Rcpp::NumericVector& pi_beta, const Rcpp::NumericVector& global_scale, const Rcpp::NumericVector& local_a, const Rcpp::NumericVector& local_b, const bool learn_residual_var, const double fixed_residual_var);
-RcppExport SEXP _blm_blm_gibbs_rcpp_cpp(SEXP ySEXP, SEXP XSEXP, SEXP prior_varSEXP, SEXP residual_shapeSEXP, SEXP residual_scaleSEXP, SEXP iterationsSEXP, SEXP burninSEXP, SEXP thinSEXP, SEXP progress_callbackSEXP, SEXP block_idSEXP, SEXP block_modelSEXP, SEXP pi_alphaSEXP, SEXP pi_betaSEXP, SEXP global_scaleSEXP, SEXP local_aSEXP, SEXP local_bSEXP, SEXP learn_residual_varSEXP, SEXP fixed_residual_varSEXP) {
+RcppExport SEXP _BayesLinReg_blm_gibbs_rcpp_cpp(SEXP ySEXP, SEXP XSEXP, SEXP prior_varSEXP, SEXP residual_shapeSEXP, SEXP residual_scaleSEXP, SEXP iterationsSEXP, SEXP burninSEXP, SEXP thinSEXP, SEXP progress_callbackSEXP, SEXP block_idSEXP, SEXP block_modelSEXP, SEXP pi_alphaSEXP, SEXP pi_betaSEXP, SEXP global_scaleSEXP, SEXP local_aSEXP, SEXP local_bSEXP, SEXP learn_residual_varSEXP, SEXP fixed_residual_varSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -54,12 +54,12 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_blm_draw_gig_rcpp_cpp", (DL_FUNC) &_blm_draw_gig_rcpp_cpp, 4},
-    {"_blm_blm_gibbs_rcpp_cpp", (DL_FUNC) &_blm_blm_gibbs_rcpp_cpp, 18},
+    {"_BayesLinReg_draw_gig_rcpp_cpp", (DL_FUNC) &_BayesLinReg_draw_gig_rcpp_cpp, 4},
+    {"_BayesLinReg_blm_gibbs_rcpp_cpp", (DL_FUNC) &_BayesLinReg_blm_gibbs_rcpp_cpp, 18},
     {NULL, NULL, 0}
 };
 
-RcppExport void R_init_blm(DllInfo *dll) {
+RcppExport void R_init_BayesLinReg(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
 }

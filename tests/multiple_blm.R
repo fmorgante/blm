@@ -1,4 +1,4 @@
-library(blm)
+library(BayesLinReg)
 
 x <- cbind(
   first = 1:5,
@@ -261,14 +261,16 @@ gig_expected_mean <- sqrt(gig_chi / gig_psi) *
   besselK(gig_argument, gig_lambda + 1) /
   besselK(gig_argument, gig_lambda)
 set.seed(301)
-gig_r <- blm:::.draw_gig(20000L, gig_lambda, gig_chi, gig_psi)
+gig_r <- BayesLinReg:::.draw_gig(20000L, gig_lambda, gig_chi, gig_psi)
 set.seed(302)
-gig_rcpp <- blm:::draw_gig_rcpp_cpp(20000L, gig_lambda, gig_chi, gig_psi)
+gig_rcpp <- BayesLinReg:::draw_gig_rcpp_cpp(
+  20000L, gig_lambda, gig_chi, gig_psi
+)
 stopifnot(
   abs(mean(gig_r) - gig_expected_mean) / gig_expected_mean < 0.03,
   abs(mean(gig_rcpp) - gig_expected_mean) / gig_expected_mean < 0.03,
-  all(is.finite(blm:::.draw_gig(100L, -0.4, 1e-8, 1e3))),
-  all(is.finite(blm:::draw_gig_rcpp_cpp(100L, 5, 1e3, 1e-4)))
+  all(is.finite(BayesLinReg:::.draw_gig(100L, -0.4, 1e-8, 1e3))),
+  all(is.finite(BayesLinReg:::draw_gig_rcpp_cpp(100L, 5, 1e3, 1e-4)))
 )
 
 # Both low-level implementations report progress at 10-percent intervals.
@@ -280,9 +282,9 @@ for (sampler_version in c("Rcpp", "R")) {
     progress_iterations <<- c(progress_iterations, iteration)
   }
   sampler <- if (sampler_version == "Rcpp") {
-    blm:::.blm_gibbs_rcpp
+    BayesLinReg:::.blm_gibbs_rcpp
   } else {
-    blm:::.blm_gibbs
+    BayesLinReg:::.blm_gibbs
   }
   invisible(sampler(
     y = y,
@@ -312,7 +314,7 @@ mock_chain <- list(
   local_var_samples = matrix(1, 2, 4),
   tau_sq_samples = matrix(c(NA, NA, 1, NA, NA, 2), 2, 3, byrow = TRUE)
 )
-mock_combined <- blm:::.combine_blm_chains(
+mock_combined <- BayesLinReg:::.combine_blm_chains(
   list(mock_chain, mock_chain),
   block_model = 0:2
 )
@@ -323,7 +325,11 @@ stopifnot(
 )
 
 # Real multisession tests are enabled outside restricted check environments.
-if (identical(Sys.getenv("BLM_TEST_FUTURE"), "true")) {
+parallel_test_flags <- Sys.getenv(c(
+  "BAYESLINREG_TEST_FUTURE",
+  "BLM_TEST_FUTURE"
+))
+if (any(parallel_test_flags == "true")) {
   parallel_fit <- multiple_blm(
     multi_y, multi_eta,
     residual_shape = 2,
