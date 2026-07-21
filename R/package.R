@@ -1,7 +1,7 @@
 #' BayesLinReg package
 #'
-#' Bayesian linear regression with normal, spike-and-slab, and global-local
-#' coefficient priors.
+#' Bayesian linear regression from raw observations or sufficient statistics,
+#' with normal, spike-and-slab, and global-local coefficient priors.
 #'
 #' @keywords internal
 #' @useDynLib BayesLinReg, .registration = TRUE

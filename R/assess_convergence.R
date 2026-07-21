@@ -2,7 +2,7 @@
 #'
 #' Produces trace plots and computes convergence diagnostics for the retained
 #' non-coefficient draws in a sampled fit returned by [blm()]. These include
-#' the intercept and residual variance; the shared coefficient variance for
+#' the intercept (when fitted) and residual variance; the shared coefficient variance for
 #' each normal block; the inclusion probability and slab variance for each
 #' spike-and-slab block; and the global variance for each global-local block.
 #' All per-predictor quantities, including regression coefficients, local

@@ -328,7 +328,9 @@
                        global_scale = 1, residual_var = NULL,
                        local_a = 1, local_b = 0.5,
                        store_samples = TRUE,
-                       store_coefficient_cov = TRUE) {
+                       store_coefficient_cov = TRUE,
+                       effective_n = NULL, fit_intercept = TRUE,
+                       intercept_x_mean = NULL, intercept_y_mean = NULL) {
   retained_iterations <- .validate_mcmc(iterations, burnin, thin, seed)
   number_of_predictors <- ncol(x)
   predictor_names <- colnames(x)
@@ -339,6 +341,9 @@
 
   x_mean <- colMeans(x)
   y_mean <- mean(y)
+  if (is.null(effective_n)) effective_n <- length(y)
+  if (is.null(intercept_x_mean)) intercept_x_mean <- x_mean
+  if (is.null(intercept_y_mean)) intercept_y_mean <- y_mean
   x_centered <- sweep(x, 2L, x_mean, FUN = "-")
   y_centered <- y - y_mean
   x_squared <- colSums(x_centered^2)
@@ -418,7 +423,8 @@
   learn_residual_var <- is.null(residual_var)
   if (learn_residual_var) {
     residual_var <- residual_scale / (residual_shape + 1)
-    residual_posterior_shape <- residual_shape + (length(y) - 1) / 2
+    residual_posterior_shape <- residual_shape +
+      (effective_n - as.integer(fit_intercept)) / 2
   }
   retained_index <- 1L
   progress_thresholds <- if (!is.null(progress_callback)) {
@@ -558,11 +564,15 @@
 
     if (retained_index <= number_of_draws &&
         iteration == retained_iterations[retained_index]) {
-      intercept_draw <- stats::rnorm(
-        1L,
-        mean = y_mean - sum(x_mean * coefficient),
-        sd = sqrt(residual_var / length(y))
-      )
+      intercept_draw <- if (fit_intercept) {
+        stats::rnorm(
+          1L,
+          mean = intercept_y_mean - sum(intercept_x_mean * coefficient),
+          sd = sqrt(residual_var / effective_n)
+        )
+      } else {
+        0
+      }
       if (store_samples) {
         coefficient_samples[retained_index, ] <- coefficient
         intercept_samples[retained_index] <- intercept_draw
@@ -687,7 +697,10 @@
                             global_scale = 1, residual_var = NULL,
                             local_a = 1, local_b = 0.5,
                             store_samples = TRUE,
-                            store_coefficient_cov = TRUE) {
+                            store_coefficient_cov = TRUE,
+                            effective_n = NULL, fit_intercept = TRUE,
+                            intercept_x_mean = NULL,
+                            intercept_y_mean = NULL) {
   .validate_mcmc(iterations, burnin, thin, seed)
   if (is.null(block_id)) {
     block_id <- rep.int(1L, ncol(x))
@@ -695,6 +708,9 @@
   if (is.null(progress_callback)) {
     progress_callback <- function(amount, iteration) invisible(NULL)
   }
+  if (is.null(effective_n)) effective_n <- length(y)
+  if (is.null(intercept_x_mean)) intercept_x_mean <- colMeans(x)
+  if (is.null(intercept_y_mean)) intercept_y_mean <- mean(y)
   samples <- blm_gibbs_rcpp_cpp(
     y = y,
     X = x,
@@ -718,7 +734,11 @@
     learn_residual_var = is.null(residual_var),
     fixed_residual_var = if (is.null(residual_var)) 1 else residual_var,
     store_samples = store_samples,
-    store_coefficient_cov = store_coefficient_cov
+    store_coefficient_cov = store_coefficient_cov,
+    effective_n = effective_n,
+    fit_intercept = fit_intercept,
+    intercept_x_mean = intercept_x_mean,
+    intercept_y_mean = intercept_y_mean
   )
   if (store_samples) {
     colnames(samples$coefficient_samples) <- colnames(x)
@@ -916,7 +936,7 @@
       call. = FALSE
     )
   }
-  required <- c("ETA", "intercept_samples", "residual_var_samples")
+  required <- c("ETA", "residual_var_samples")
   if (!is.list(fit) || !all(required %in% names(fit))) {
     stop(
       "`fit` must be a sampled fit returned by `blm()`.",
@@ -932,16 +952,21 @@
     )
   }
   number_of_draws <- nrow(as.matrix(fit$ETA[[1L]]$coefficient_samples))
-  if (length(fit$intercept_samples) != number_of_draws ||
+  has_intercept <- !is.null(fit$intercept_samples)
+  if ((has_intercept && length(fit$intercept_samples) != number_of_draws) ||
       length(fit$residual_var_samples) != number_of_draws) {
     stop("`fit` contains sample components with incompatible lengths.",
          call. = FALSE)
   }
 
-  sample_matrix <- cbind(
-    intercept = fit$intercept_samples,
-    residual_var = fit$residual_var_samples
-  )
+  sample_matrix <- if (has_intercept) {
+    cbind(
+      intercept = fit$intercept_samples,
+      residual_var = fit$residual_var_samples
+    )
+  } else {
+    cbind(residual_var = fit$residual_var_samples)
+  }
 
   for (block_name in names(fit$ETA)) {
     block <- fit$ETA[[block_name]]

@@ -9,6 +9,8 @@ block controls its own standardization, prior family, and prior parameters,
 while coefficients are always returned on their original scale. Gibbs sampling
 is available in R and Rcpp with optional parallel chains.
 
+It was created by OpenAI Codex, supervised by Fabio Morgante. It has not been reviewed and tested carefully.
+
 ## Installation
 
 Install the development version from GitHub:
@@ -70,10 +72,33 @@ vector. Set `store_coefficient_cov = FALSE` to omit its full
 `coefficient_cov` matrix; this also avoids the quadratic-size covariance
 accumulator when `store_samples = FALSE`.
 
+## Sufficient statistics
+
+Use `blm_ss()` when the original response and predictor matrix are unavailable:
+
+```r
+fit_ss <- blm_ss(
+  n = nrow(X),
+  XtX = crossprod(X),
+  Xty = crossprod(X, y),
+  yty = sum(y^2),
+  X_means = colMeans(X),
+  y_mean = mean(y),
+  ETA = list(model = "Normal"),
+  residual_var = 1
+)
+```
+
+`n`, `XtX`, and `Xty` are required. Learning the residual variance additionally
+requires `yty`. Supply `X_means` and `y_mean` together to fit an intercept;
+otherwise `blm_ss()` fits a no-intercept model and warns. For multiple prior
+blocks, each `ETA` block uses `indices` to select a disjoint set of columns from
+`XtX`.
+
 The available models are `"Normal"`, `"SpikeSlab"`, and `"GlobalLocal"`.
 For every model, `residual_var` may be supplied as a fixed value or learned
 from `residual_shape` and `residual_scale`.
 For mixed priors, use a named `ETA` list whose blocks specify their own
 predictors, model, standardization, and prior parameters.
 
-It was created by OpenAI Codex, supervised by Fabio Morgante. It has not been reviewed and tested carefully.
+

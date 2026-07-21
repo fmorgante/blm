@@ -77,7 +77,11 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     const bool learn_residual_var,
     const double fixed_residual_var,
     const bool store_samples,
-    const bool store_coefficient_cov) {
+    const bool store_coefficient_cov,
+    const int effective_n,
+    const bool fit_intercept,
+    const Rcpp::NumericVector& intercept_x_mean,
+    const double intercept_y_mean) {
   Rcpp::RNGScope scope;
 
   const int n = y.size();
@@ -182,7 +186,8 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     }
   }
   const double posterior_shape =
-    residual_shape + static_cast<double>(n - 1) / 2.0;
+    residual_shape +
+      static_cast<double>(effective_n - (fit_intercept ? 1 : 0)) / 2.0;
   int retained_index = 0;
   int next_progress_percent = 10;
   int last_reported_iteration = 0;
@@ -351,7 +356,7 @@ Rcpp::List blm_gibbs_rcpp_cpp(
 
     if (iteration > burnin &&
         (iteration - burnin - 1) % thin == 0) {
-      double intercept_mean = y_mean;
+      double intercept_mean = intercept_y_mean;
       for (int j = 0; j < p; ++j) {
         const int block = block_id[j] - 1;
         const int model = block_model[block];
@@ -364,12 +369,14 @@ Rcpp::List blm_gibbs_rcpp_cpp(
             local_var_samples(retained_index, j) = local_var[j];
           }
         }
-        intercept_mean -= x_mean[j] * coefficient[j];
+        intercept_mean -= intercept_x_mean[j] * coefficient[j];
       }
-      const double intercept_draw = R::rnorm(
-        intercept_mean,
-        std::sqrt(residual_var / n)
-      );
+      const double intercept_draw = fit_intercept
+        ? R::rnorm(
+            intercept_mean,
+            std::sqrt(residual_var / effective_n)
+          )
+        : 0.0;
       if (store_samples) {
         intercept_samples[retained_index] = intercept_draw;
         residual_var_samples[retained_index] = residual_var;

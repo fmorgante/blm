@@ -2,6 +2,7 @@
 
 export(assess_convergence)
 export(blm)
+export(blm_ss)
 importFrom(GIGrvg,rgig)
 importFrom(Rcpp,evalCpp)
 useDynLib(BayesLinReg, .registration = TRUE)
