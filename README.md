@@ -55,6 +55,13 @@ fit$ETA$ETA1$coefficient_mean
 fit$intercept_mean
 ```
 
+The available models are `"Normal"`, `"SpikeSlab"`, `"SpikeMultiSlab"`, and
+`"GlobalLocal"`.
+For every model, `residual_var` may be supplied as a fixed value or learned
+from `residual_shape` and `residual_scale`.
+For mixed priors, use a named `ETA` list whose blocks specify their own
+predictors, model, standardization, and prior parameters.
+
 By default, `blm()` returns the retained posterior draws. For large models,
 use `store_samples = FALSE` to compute posterior summaries online and keep the
 fitted object smaller:
@@ -102,10 +109,3 @@ blocks, each `ETA` block uses `indices` to select a disjoint set of columns from
 requires`version = "Rcpp"`. Full eigenvalue-based validation is optional through
 `check_psd = TRUE` and is disabled by default to avoid its cubic initialization
 cost; requesting it for sparse input temporarily constructs a dense matrix.
-
-The available models are `"Normal"`, `"SpikeSlab"`, `"SpikeMultiSlab"`, and
-`"GlobalLocal"`.
-For every model, `residual_var` may be supplied as a fixed value or learned
-from `residual_shape` and `residual_scale`.
-For mixed priors, use a named `ETA` list whose blocks specify their own
-predictors, model, standardization, and prior parameters.
