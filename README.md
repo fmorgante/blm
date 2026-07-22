@@ -96,10 +96,15 @@ otherwise `blm_ss()` fits a no-intercept model and warns. For multiple prior
 blocks, each `ETA` block uses `indices` to select a disjoint set of columns from
 `XtX`.
 
+`blm_ss()` samples directly from these cross-products by maintaining the
+corrected right-hand side `Xty - XtX %*% beta`; it does not construct
+pseudo-observations. Full eigenvalue-based validation is optional through
+`check_psd = TRUE` and is disabled by default to avoid its cubic initialization
+cost.
+
 The available models are `"Normal"`, `"SpikeSlab"`, `"SpikeMultiSlab"`, and
 `"GlobalLocal"`.
 For every model, `residual_var` may be supplied as a fixed value or learned
 from `residual_shape` and `residual_scale`.
 For mixed priors, use a named `ETA` list whose blocks specify their own
 predictors, model, standardization, and prior parameters.
-

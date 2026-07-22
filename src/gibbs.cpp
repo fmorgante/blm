@@ -85,40 +85,52 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     const int effective_n,
     const bool fit_intercept,
     const Rcpp::NumericVector& intercept_x_mean,
-    const double intercept_y_mean) {
+    const double intercept_y_mean,
+    const bool use_sufficient_statistics,
+    const Rcpp::NumericMatrix& summary_XtX,
+    const Rcpp::NumericVector& summary_Xty,
+    const double summary_yty) {
   Rcpp::RNGScope scope;
 
   const int n = y.size();
-  const int p = X.ncol();
+  const int p = use_sufficient_statistics ? summary_XtX.ncol() : X.ncol();
   const int number_of_blocks = block_model.size();
   const int number_of_draws = (iterations - burnin - 1) / thin + 1;
 
   std::vector<double> x_mean(p, 0.0);
   double y_mean = 0.0;
-  for (int i = 0; i < n; ++i) {
-    y_mean += y[i];
-    for (int j = 0; j < p; ++j) {
-      x_mean[j] += X(i, j);
+  if (!use_sufficient_statistics) {
+    for (int i = 0; i < n; ++i) {
+      y_mean += y[i];
+      for (int j = 0; j < p; ++j) {
+        x_mean[j] += X(i, j);
+      }
     }
-  }
-  y_mean /= n;
-  for (int j = 0; j < p; ++j) {
-    x_mean[j] /= n;
+    y_mean /= n;
+    for (int j = 0; j < p; ++j) {
+      x_mean[j] /= n;
+    }
   }
 
   Rcpp::NumericMatrix x_centered(n, p);
   Rcpp::NumericVector y_centered(n);
-  for (int i = 0; i < n; ++i) {
-    y_centered[i] = y[i] - y_mean;
-    for (int j = 0; j < p; ++j) {
-      x_centered(i, j) = X(i, j) - x_mean[j];
+  if (!use_sufficient_statistics) {
+    for (int i = 0; i < n; ++i) {
+      y_centered[i] = y[i] - y_mean;
+      for (int j = 0; j < p; ++j) {
+        x_centered(i, j) = X(i, j) - x_mean[j];
+      }
     }
   }
 
   std::vector<double> x_squared(p, 0.0);
   for (int j = 0; j < p; ++j) {
-    for (int i = 0; i < n; ++i) {
-      x_squared[j] += x_centered(i, j) * x_centered(i, j);
+    if (use_sufficient_statistics) {
+      x_squared[j] = summary_XtX(j, j);
+    } else {
+      for (int i = 0; i < n; ++i) {
+        x_squared[j] += x_centered(i, j) * x_centered(i, j);
+      }
     }
   }
 
@@ -168,8 +180,16 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   std::vector<double> local_var(p, 1.0);
   std::vector<double> local_aux(p, 1.0);
   std::vector<double> residuals(n);
-  for (int i = 0; i < n; ++i) {
-    residuals[i] = y_centered[i];
+  std::vector<double> corrected_rhs(p, 0.0);
+  double residual_sse = summary_yty;
+  if (use_sufficient_statistics) {
+    for (int j = 0; j < p; ++j) {
+      corrected_rhs[j] = summary_Xty[j];
+    }
+  } else {
+    for (int i = 0; i < n; ++i) {
+      residuals[i] = y_centered[i];
+    }
   }
 
   double residual_var = learn_residual_var
@@ -258,10 +278,17 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     for (int j = 0; j < p; ++j) {
       const int block = block_id[j] - 1;
       const int model = block_model[block];
+      const double old_coefficient = coefficient[j];
       double conditional_numerator = 0.0;
-      for (int i = 0; i < n; ++i) {
-        residuals[i] += x_centered(i, j) * coefficient[j];
-        conditional_numerator += x_centered(i, j) * residuals[i];
+      double partial_rhs = 0.0;
+      if (use_sufficient_statistics) {
+        partial_rhs = corrected_rhs[j] + x_squared[j] * old_coefficient;
+        conditional_numerator = partial_rhs;
+      } else {
+        for (int i = 0; i < n; ++i) {
+          residuals[i] += x_centered(i, j) * old_coefficient;
+          conditional_numerator += x_centered(i, j) * residuals[i];
+        }
       }
       if (model == 3) {
         const int component_count = multi_gamma[block].size();
@@ -353,8 +380,39 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           coefficient[j] = 0.0;
         }
       }
-      for (int i = 0; i < n; ++i) {
-        residuals[i] -= x_centered(i, j) * coefficient[j];
+      if (use_sufficient_statistics) {
+        const double coefficient_change = coefficient[j] - old_coefficient;
+        if (coefficient_change != 0.0) {
+          for (int k = 0; k < p; ++k) {
+            corrected_rhs[k] -= summary_XtX(k, j) * coefficient_change;
+          }
+          if (learn_residual_var) {
+            residual_sse += -2.0 * coefficient_change * partial_rhs +
+              (coefficient[j] * coefficient[j] -
+               old_coefficient * old_coefficient) * x_squared[j];
+          }
+        }
+      } else {
+        for (int i = 0; i < n; ++i) {
+          residuals[i] -= x_centered(i, j) * coefficient[j];
+        }
+      }
+    }
+
+    if (use_sufficient_statistics && iteration % 100 == 0) {
+      double quadratic = 0.0;
+      double linear = 0.0;
+      for (int j = 0; j < p; ++j) {
+        double fitted_crossproduct = 0.0;
+        for (int k = 0; k < p; ++k) {
+          fitted_crossproduct += summary_XtX(j, k) * coefficient[k];
+        }
+        corrected_rhs[j] = summary_Xty[j] - fitted_crossproduct;
+        linear += coefficient[j] * summary_Xty[j];
+        quadratic += coefficient[j] * fitted_crossproduct;
+      }
+      if (learn_residual_var) {
+        residual_sse = summary_yty - 2.0 * linear + quadratic;
       }
     }
 
@@ -498,12 +556,15 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     }
 
     if (learn_residual_var) {
-      double sum_squared_residuals = 0.0;
-      for (int i = 0; i < n; ++i) {
-        sum_squared_residuals += residuals[i] * residuals[i];
+      double sum_squared_residuals = residual_sse;
+      if (!use_sufficient_statistics) {
+        sum_squared_residuals = 0.0;
+        for (int i = 0; i < n; ++i) {
+          sum_squared_residuals += residuals[i] * residuals[i];
+        }
       }
       const double posterior_scale =
-        residual_scale + 0.5 * sum_squared_residuals;
+        residual_scale + 0.5 * std::max(0.0, sum_squared_residuals);
       residual_var = 1.0 / R::rgamma(
         posterior_shape,
         1.0 / posterior_scale

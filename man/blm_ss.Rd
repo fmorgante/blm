@@ -23,7 +23,8 @@ blm_ss(
   verbose = FALSE,
   nchains = 1L,
   store_samples = TRUE,
-  store_coefficient_cov = TRUE
+  store_coefficient_cov = TRUE,
+  check_psd = FALSE
 )
 }
 \arguments{
@@ -45,6 +46,12 @@ required when \code{residual_var = NULL}.}
 \item{X_means, y_mean}{Optional predictor means and response mean. They must
 be supplied together. When omitted, the model is fitted without an
 intercept.}
+
+\item{check_psd}{If \code{TRUE}, use a full eigendecomposition to verify that the
+centered \code{XtX} is positive semidefinite and that \code{Xty} and \code{yty} are
+jointly compatible with it. The default, \code{FALSE}, avoids this
+\eqn{O(p^3)} validation cost. Symmetry and basic input checks are always
+performed.}
 
 \item{residual_var}{A positive known residual variance, or \code{NULL} to learn
 it using an inverse-gamma prior.}
@@ -85,8 +92,8 @@ A fitted object with the same block-specific posterior summaries as
 \code{y_mean} are supplied.
 }
 \description{
-Fits the same prior models as \code{\link[=blm]{blm()}} using cross-products instead of the
-original response and predictor matrix.
+Fits the same prior models as \code{\link[=blm]{blm()}} directly from cross-products instead
+of the original response and predictor matrix.
 }
 \details{
 If means are supplied, \code{XtX}, \code{Xty}, and \code{yty} are interpreted as
@@ -94,6 +101,10 @@ uncentered cross-products and are centered internally. Without means,
 they are used as supplied. If any block requests standardization without
 means, a warning reminds the user that the supplied cross-products should
 already represent centered or standardized variables.
+Coefficients are sampled with a right-hand-side update that maintains
+\eqn{X'y-X'X\beta}; individual-level pseudo-observations are not formed.
+Set \code{check_psd = TRUE} when the supplied statistics are not known to come
+from a valid common data matrix and response vector.
 }
 \examples{
 X <- cbind(x1 = 1:20, x2 = rep(c(0, 1), 10))

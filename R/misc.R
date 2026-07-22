@@ -417,23 +417,39 @@
                        store_samples = TRUE,
                        store_coefficient_cov = TRUE,
                        effective_n = NULL, fit_intercept = TRUE,
-                       intercept_x_mean = NULL, intercept_y_mean = NULL) {
+                       intercept_x_mean = NULL, intercept_y_mean = NULL,
+                       XtX = NULL, Xty = NULL, yty = NULL) {
   retained_iterations <- .validate_mcmc(iterations, burnin, thin, seed)
-  number_of_predictors <- ncol(x)
-  predictor_names <- colnames(x)
+  use_sufficient_statistics <- !is.null(XtX)
+  number_of_predictors <- if (use_sufficient_statistics) {
+    ncol(XtX)
+  } else {
+    ncol(x)
+  }
+  predictor_names <- if (use_sufficient_statistics) {
+    colnames(XtX)
+  } else {
+    colnames(x)
+  }
   if (is.null(block_id)) {
     block_id <- rep.int(1L, number_of_predictors)
   }
   number_of_blocks <- length(block_model)
 
-  x_mean <- colMeans(x)
-  y_mean <- mean(y)
-  if (is.null(effective_n)) effective_n <- length(y)
-  if (is.null(intercept_x_mean)) intercept_x_mean <- x_mean
-  if (is.null(intercept_y_mean)) intercept_y_mean <- y_mean
-  x_centered <- sweep(x, 2L, x_mean, FUN = "-")
-  y_centered <- y - y_mean
-  x_squared <- colSums(x_centered^2)
+  if (use_sufficient_statistics) {
+    x_squared <- diag(XtX)
+    corrected_rhs <- as.numeric(Xty)
+    residual_sse <- yty
+  } else {
+    x_mean <- colMeans(x)
+    y_mean <- mean(y)
+    if (is.null(effective_n)) effective_n <- length(y)
+    if (is.null(intercept_x_mean)) intercept_x_mean <- x_mean
+    if (is.null(intercept_y_mean)) intercept_y_mean <- y_mean
+    x_centered <- sweep(x, 2L, x_mean, FUN = "-")
+    y_centered <- y - y_mean
+    x_squared <- colSums(x_centered^2)
+  }
 
   number_of_draws <- length(retained_iterations)
   if (store_samples) {
@@ -541,7 +557,7 @@
   }
 
   coefficient <- numeric(number_of_predictors)
-  residuals <- y_centered
+  if (!use_sufficient_statistics) residuals <- y_centered
   learn_residual_var <- is.null(residual_var)
   if (learn_residual_var) {
     residual_var <- residual_scale / (residual_shape + 1)
@@ -564,10 +580,17 @@
     for (predictor in seq_len(number_of_predictors)) {
       block <- block_id[predictor]
       model <- block_model[block]
-      partial_residuals <- residuals +
-        x_centered[, predictor] * coefficient[predictor]
-      conditional_numerator <-
-        sum(x_centered[, predictor] * partial_residuals) / residual_var
+      old_coefficient <- coefficient[predictor]
+      if (use_sufficient_statistics) {
+        partial_rhs <- corrected_rhs[predictor] +
+          x_squared[predictor] * old_coefficient
+        conditional_numerator <- partial_rhs / residual_var
+      } else {
+        partial_residuals <- residuals +
+          x_centered[, predictor] * old_coefficient
+        conditional_numerator <-
+          sum(x_centered[, predictor] * partial_residuals) / residual_var
+      }
       if (model == 3L) {
         gamma <- multi_gamma[[block]]
         log_weights <- log(pmax(multi_pi[[block]], .Machine$double.xmin))
@@ -634,8 +657,31 @@
           coefficient[predictor] <- 0
         }
       }
-      residuals <- partial_residuals -
-        x_centered[, predictor] * coefficient[predictor]
+      if (use_sufficient_statistics) {
+        coefficient_change <- coefficient[predictor] - old_coefficient
+        if (coefficient_change != 0) {
+          corrected_rhs <- corrected_rhs -
+            XtX[, predictor] * coefficient_change
+          if (learn_residual_var) {
+            residual_sse <- residual_sse -
+              2 * coefficient_change * partial_rhs +
+              (coefficient[predictor]^2 - old_coefficient^2) *
+                x_squared[predictor]
+          }
+        }
+      } else {
+        residuals <- partial_residuals -
+          x_centered[, predictor] * coefficient[predictor]
+      }
+    }
+
+    if (use_sufficient_statistics && iteration %% 100L == 0L) {
+      fitted_crossproducts <- drop(XtX %*% coefficient)
+      corrected_rhs <- Xty - fitted_crossproducts
+      if (learn_residual_var) {
+        residual_sse <- yty - 2 * sum(coefficient * Xty) +
+          sum(coefficient * fitted_crossproducts)
+      }
     }
 
     if (has_normal) {
@@ -734,8 +780,13 @@
     }
 
     if (learn_residual_var) {
+      sum_squared_residuals <- if (use_sufficient_statistics) {
+        max(0, residual_sse)
+      } else {
+        sum(residuals^2)
+      }
       residual_posterior_scale <- residual_scale +
-        0.5 * sum(residuals^2)
+        0.5 * sum_squared_residuals
       residual_var <- 1 / stats::rgamma(
         1L,
         shape = residual_posterior_shape,
@@ -921,10 +972,14 @@
                             store_coefficient_cov = TRUE,
                             effective_n = NULL, fit_intercept = TRUE,
                             intercept_x_mean = NULL,
-                            intercept_y_mean = NULL) {
+                            intercept_y_mean = NULL,
+                            XtX = NULL, Xty = NULL, yty = NULL) {
   .validate_mcmc(iterations, burnin, thin, seed)
+  use_sufficient_statistics <- !is.null(XtX)
   if (is.null(block_id)) {
-    block_id <- rep.int(1L, ncol(x))
+    block_id <- rep.int(
+      1L, if (use_sufficient_statistics) ncol(XtX) else ncol(x)
+    )
   }
   if (is.null(progress_callback)) {
     progress_callback <- function(amount, iteration) invisible(NULL)
@@ -963,28 +1018,37 @@
     effective_n = effective_n,
     fit_intercept = fit_intercept,
     intercept_x_mean = intercept_x_mean,
-    intercept_y_mean = intercept_y_mean
+    intercept_y_mean = intercept_y_mean,
+    use_sufficient_statistics = use_sufficient_statistics,
+    summary_XtX = if (use_sufficient_statistics) XtX else matrix(0, 0L, 0L),
+    summary_Xty = if (use_sufficient_statistics) Xty else numeric(),
+    summary_yty = if (use_sufficient_statistics && !is.null(yty)) yty else 0
   )
   if (store_samples) {
-    colnames(samples$coefficient_samples) <- colnames(x)
+    predictor_names <- if (use_sufficient_statistics) {
+      colnames(XtX)
+    } else {
+      colnames(x)
+    }
+    colnames(samples$coefficient_samples) <- predictor_names
     if (!any(block_model == 0L)) {
       samples$normal_var_samples <- NULL
     }
     if (any(block_model == 1L)) {
-      colnames(samples$inclusion_samples) <- colnames(x)
+      colnames(samples$inclusion_samples) <- predictor_names
     } else {
       samples$inclusion_samples <- NULL
       samples$pi_samples <- NULL
       samples$slab_var_samples <- NULL
     }
     if (any(block_model == 2L)) {
-      colnames(samples$local_var_samples) <- colnames(x)
+      colnames(samples$local_var_samples) <- predictor_names
     } else {
       samples$local_var_samples <- NULL
       samples$tau_sq_samples <- NULL
     }
     if (any(block_model == 3L)) {
-      colnames(samples$multi_component_samples) <- colnames(x)
+      colnames(samples$multi_component_samples) <- predictor_names
     } else {
       samples$multi_component_samples <- NULL
       samples$multi_pi_samples <- NULL

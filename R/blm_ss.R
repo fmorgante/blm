@@ -1,7 +1,7 @@
 #' Bayesian linear regression from sufficient statistics
 #'
-#' Fits the same prior models as [blm()] using cross-products instead of the
-#' original response and predictor matrix.
+#' Fits the same prior models as [blm()] directly from cross-products instead
+#' of the original response and predictor matrix.
 #'
 #' @param n Number of observations used to form the sufficient statistics.
 #' @param XtX A finite, symmetric predictor cross-product matrix.
@@ -16,6 +16,11 @@
 #' @param X_means,y_mean Optional predictor means and response mean. They must
 #'   be supplied together. When omitted, the model is fitted without an
 #'   intercept.
+#' @param check_psd If `TRUE`, use a full eigendecomposition to verify that the
+#'   centered `XtX` is positive semidefinite and that `Xty` and `yty` are
+#'   jointly compatible with it. The default, `FALSE`, avoids this
+#'   \eqn{O(p^3)} validation cost. Symmetry and basic input checks are always
+#'   performed.
 #' @inheritParams blm
 #'
 #' @return A fitted object with the same block-specific posterior summaries as
@@ -27,6 +32,11 @@
 #'   they are used as supplied. If any block requests standardization without
 #'   means, a warning reminds the user that the supplied cross-products should
 #'   already represent centered or standardized variables.
+#'
+#'   Coefficients are sampled with a right-hand-side update that maintains
+#'   \eqn{X'y-X'X\beta}; individual-level pseudo-observations are not formed.
+#'   Set `check_psd = TRUE` when the supplied statistics are not known to come
+#'   from a valid common data matrix and response vector.
 #'
 #' @export
 #'
@@ -52,7 +62,7 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
                    iterations = 4000L, burnin = 1000L, thin = 1L,
                    seed = NULL, version = c("Rcpp", "R"), verbose = FALSE,
                    nchains = 1L, store_samples = TRUE,
-                   store_coefficient_cov = TRUE) {
+                   store_coefficient_cov = TRUE, check_psd = FALSE) {
   version <- match.arg(version)
   nchains <- .validate_nchains(nchains)
   if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
@@ -65,6 +75,9 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   if (!is.logical(store_coefficient_cov) ||
       length(store_coefficient_cov) != 1L || is.na(store_coefficient_cov)) {
     stop("`store_coefficient_cov` must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (!is.logical(check_psd) || length(check_psd) != 1L || is.na(check_psd)) {
+    stop("`check_psd` must be TRUE or FALSE.", call. = FALSE)
   }
 
   statistics <- .validate_sufficient_statistics(
@@ -167,7 +180,6 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   working_XtX <- centered_XtX[source_order, source_order, drop = FALSE] /
     outer(scale_order, scale_order)
   working_Xty <- centered_Xty[source_order] / scale_order
-  pseudo <- .crossproducts_to_pseudo(working_XtX, working_Xty, centered_yty)
 
   block_sizes <- lengths(source_indices)
   block_ends <- cumsum(block_sizes)
@@ -178,7 +190,11 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   internal_names <- unlist(lapply(seq_along(blocks), function(block_index) {
     paste0(names(blocks)[block_index], "::", blocks[[block_index]]$predictor_names)
   }))
-  colnames(pseudo$x) <- internal_names
+  dimnames(working_XtX) <- list(internal_names, internal_names)
+  names(working_Xty) <- internal_names
+  if (check_psd) {
+    .validate_working_crossproducts(working_XtX, working_Xty, centered_yty)
+  }
 
   normal_shape <- vapply(blocks, `[[`, numeric(1), "normal_shape")
   normal_scale <- vapply(blocks, `[[`, numeric(1), "normal_scale")
@@ -194,8 +210,11 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   multi_var_shape <- vapply(blocks, `[[`, numeric(1), "multi_var_shape")
   multi_var_scale <- vapply(blocks, `[[`, numeric(1), "multi_var_scale")
   sampler_arguments <- list(
-    y = pseudo$y,
-    x = pseudo$x,
+    y = numeric(),
+    x = matrix(numeric(), nrow = 0L, ncol = ncol(working_XtX)),
+    XtX = working_XtX,
+    Xty = working_Xty,
+    yty = centered_yty,
     residual_shape = if (is.null(residual_shape)) 1 else residual_shape,
     residual_scale = if (is.null(residual_scale)) 1 else residual_scale,
     residual_var = residual_var,
@@ -288,10 +307,6 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
     stop("`XtX` must be symmetric.", call. = FALSE)
   }
   XtX <- (XtX + t(XtX)) / 2
-  eigenvalues <- eigen(XtX, symmetric = TRUE, only.values = TRUE)$values
-  if (min(eigenvalues) < -tolerance) {
-    stop("`XtX` must be positive semidefinite.", call. = FALSE)
-  }
   p <- ncol(XtX)
   if (is.matrix(Xty) && is.numeric(Xty) &&
       identical(dim(Xty), c(p, 1L))) {
@@ -415,10 +430,13 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   list(blocks = blocks, source_indices = source_indices)
 }
 
-.crossproducts_to_pseudo <- function(XtX, Xty, yty = NULL) {
+.validate_working_crossproducts <- function(XtX, Xty, yty = NULL) {
   decomposition <- eigen(XtX, symmetric = TRUE)
   tolerance <- sqrt(.Machine$double.eps) *
     max(1, max(abs(decomposition$values)))
+  if (min(decomposition$values) < -tolerance) {
+    stop("The centered `XtX` must be positive semidefinite.", call. = FALSE)
+  }
   positive <- decomposition$values > tolerance
   coordinates <- drop(crossprod(decomposition$vectors, Xty))
   if (any(abs(coordinates[!positive]) >
@@ -431,38 +449,8 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
     0
   }
   joint_tolerance <- sqrt(.Machine$double.eps) * max(1, minimum_yty)
-  if (is.null(yty)) {
-    yty <- minimum_yty
-  } else if (yty < minimum_yty - joint_tolerance) {
+  if (!is.null(yty) && yty < minimum_yty - joint_tolerance) {
     stop("`yty` is incompatible with `XtX` and `Xty`.", call. = FALSE)
-  } else {
-    yty <- max(yty, minimum_yty)
   }
-  joint <- rbind(cbind(XtX, Xty), c(Xty, yty))
-  joint <- (joint + t(joint)) / 2
-  joint_decomposition <- eigen(joint, symmetric = TRUE)
-  joint_tolerance <- sqrt(.Machine$double.eps) *
-    max(1, max(abs(joint_decomposition$values)))
-  if (min(joint_decomposition$values) < -joint_tolerance) {
-    stop("The supplied sufficient statistics are not jointly valid.",
-         call. = FALSE)
-  }
-  retained <- joint_decomposition$values > joint_tolerance
-  rank <- sum(retained)
-  if (rank == 0L) {
-    values <- matrix(0, nrow = 2L, ncol = ncol(joint))
-  } else {
-    factor <- sqrt(joint_decomposition$values[retained]) *
-      t(joint_decomposition$vectors[, retained, drop = FALSE])
-    basis_input <- cbind(
-      rep(1, rank + 1L),
-      diag(rank + 1L)[, seq_len(rank), drop = FALSE]
-    )
-    zero_mean_basis <- qr.Q(qr(basis_input))[, -1L, drop = FALSE]
-    values <- zero_mean_basis %*% factor
-  }
-  list(
-    x = values[, seq_len(ncol(XtX)), drop = FALSE],
-    y = values[, ncol(values)]
-  )
+  invisible(NULL)
 }

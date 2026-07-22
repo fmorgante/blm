@@ -11,7 +11,9 @@ yty <- sum(y^2)
 
 # Sufficient-statistics fits reproduce raw-data fits for every prior and engine.
 for (sampler_version in c("Rcpp", "R")) {
-  for (model in c("Normal", "SpikeSlab", "GlobalLocal")) {
+  for (model in c(
+    "Normal", "SpikeSlab", "GlobalLocal", "SpikeMultiSlab"
+  )) {
     raw_fit <- blm(
       y,
       ETA = list(X = X, model = model),
@@ -143,6 +145,34 @@ stopifnot(
   ) < 0.2
 )
 
+# Rank-deficient cross-products do not require a pseudo-design factorization.
+rank_X <- cbind(
+  x1 = seq_len(40),
+  x2 = rep(c(-1, 1), 20),
+  x3 = seq_len(40) + rep(c(-1, 1), 20)
+)
+rank_y <- drop(2 + rank_X %*% c(0.5, -0.25, 0.1) + rnorm(40, sd = 0.2))
+rank_fits <- lapply(c("R", "Rcpp"), function(sampler_version) {
+  blm_ss(
+    nrow(rank_X), crossprod(rank_X), crossprod(rank_X, rank_y),
+    ETA = list(model = "Normal"), yty = sum(rank_y^2),
+    X_means = colMeans(rank_X), y_mean = mean(rank_y),
+    residual_shape = 2, residual_scale = 1,
+    iterations = 150, burnin = 50, seed = 509,
+    version = sampler_version
+  )
+})
+stopifnot(
+  all(vapply(rank_fits, function(fit) {
+    all(is.finite(fit$ETA$ETA1$coefficient_mean)) &&
+      all(fit$residual_var_samples > 0)
+  }, logical(1))),
+  max(abs(
+    rank_fits[[1]]$ETA$ETA1$coefficient_mean -
+      rank_fits[[2]]$ETA$ETA1$coefficient_mean
+  )) < 0.2
+)
+
 warnings <- character()
 invisible(withCallingHandlers(
   blm_ss(
@@ -159,6 +189,14 @@ stopifnot(
   length(warnings) == 1L,
   grepl("without an intercept", warnings, fixed = TRUE)
 )
+
+# Full PSD and joint-compatibility validation is opt-in.
+unchecked_fit <- blm_ss(
+  n, XtX, Xty, yty = 0, ETA = list(model = "Normal"),
+  X_means = colMeans(X), y_mean = mean(y), residual_var = 1,
+  iterations = 50, burnin = 20, seed = 510
+)
+stopifnot(inherits(unchecked_fit, "blm_fit"))
 
 # Invalid or incomplete sufficient statistics are rejected.
 invalid_calls <- list(
@@ -192,7 +230,16 @@ invalid_calls <- list(
   function() blm_ss(
     n, XtX, Xty, yty = 0,
     ETA = list(model = "Normal"),
-    residual_shape = 2, residual_scale = 1
+    residual_shape = 2, residual_scale = 1, check_psd = TRUE
+  ),
+  function() blm_ss(
+    10, matrix(c(1, 2, 2, 1), 2), c(0, 0),
+    ETA = list(model = "Normal", standardize = FALSE),
+    residual_var = 1, check_psd = TRUE
+  ),
+  function() blm_ss(
+    n, XtX, Xty, ETA = list(model = "Normal"), residual_var = 1,
+    check_psd = NA
   )
 )
 stopifnot(all(vapply(
