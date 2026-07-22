@@ -9,7 +9,8 @@
 #' @param y A finite numeric response vector.
 #' @param ETA A predictor specification or named list of predictor
 #'   specifications. Each block must contain `X` and `model`. Available models
-#'   are `"Normal"`, `"SpikeSlab"`, and `"GlobalLocal"`. See Details.
+#'   are `"Normal"`, `"SpikeSlab"`, `"GlobalLocal"`, and
+#'   `"SpikeMultiSlab"`. See Details.
 #' @param residual_var A positive known residual variance, or `NULL` to learn
 #'   it using an inverse-gamma prior.
 #' @param residual_shape,residual_scale Positive shape and scale parameters for
@@ -40,7 +41,10 @@
 #'   when `store_coefficient_cov = TRUE`. When
 #'   `store_samples = TRUE`, the corresponding posterior draws are also
 #'   returned. With multiple chains, `chain_id` identifies the origin of each
-#'   retained draw when samples are stored.
+#'   retained draw when samples are stored. `SpikeMultiSlab` blocks additionally
+#'   return per-predictor `component_probability` values, an
+#'   `inclusion_probability` vector, and summaries of the mixture probabilities
+#'   and shared variance.
 #'
 #' @details `ETA` may be a single-block specification such as
 #'   `list(X = X, model = "Normal")`, or a named list of blocks.
@@ -54,7 +58,7 @@
 #'   `var_scale = 1`. Its coefficients share a variance sampled from an
 #'   inverse-gamma prior with the supplied shape and scale.
 #'   A `"SpikeSlab"` block optionally accepts `pi = c(a = 1, b = 1)`,
-#'   `slab_shape = 2`, and `slab_scale = 1`. Its shared slab variance has an
+#'   `var_shape = 2`, and `var_scale = 1`. Its shared slab variance has an
 #'   inverse-gamma prior with the supplied shape and scale. A `"GlobalLocal"`
 #'   block optionally accepts
 #'   `local_shape = c(a = 1, b = 0.5)` and `global_scale = 1`. Its hierarchy is
@@ -62,6 +66,15 @@
 #'   \psi_j \sim \mathrm{BetaPrime}(a,b),}
 #'   with \eqn{\tau \sim C^+(0,\mathrm{global\_scale})}. Thus the default is
 #'   Strawderman-Berger, while `local_shape = c(0.5, 0.5)` gives the horseshoe.
+#'
+#'   A `"SpikeMultiSlab"` block uses a BayesR-style mixture containing a point
+#'   mass at zero followed by normal slabs. It optionally accepts
+#'   `gamma = c(0, 0.01, 0.1, 1)`, a strictly increasing vector whose first
+#'   element is zero; `alpha = rep(1, length(gamma))`, the Dirichlet prior
+#'   concentrations for the component probabilities; and `var_shape = 2` and
+#'   `var_scale = 1` for the inverse-gamma prior on the shared variance. Given
+#'   component \eqn{c > 1}, the coefficient variance is
+#'   \eqn{\gamma_c \sigma_\beta^2}.
 #'   The coefficient priors are independent of the residual variance.
 #' @export
 #'
@@ -152,11 +165,15 @@ blm <- function(y, ETA, residual_var = NULL,
   normal_scale <- vapply(blocks, `[[`, numeric(1), "normal_scale")
   pi_alpha <- vapply(blocks, `[[`, numeric(1), "pi_alpha")
   pi_beta <- vapply(blocks, `[[`, numeric(1), "pi_beta")
-  slab_shape <- vapply(blocks, `[[`, numeric(1), "slab_shape")
-  slab_scale <- vapply(blocks, `[[`, numeric(1), "slab_scale")
+  spike_var_shape <- vapply(blocks, `[[`, numeric(1), "spike_var_shape")
+  spike_var_scale <- vapply(blocks, `[[`, numeric(1), "spike_var_scale")
   global_scale <- vapply(blocks, `[[`, numeric(1), "global_scale")
   local_a <- vapply(blocks, function(block) block$local_shape[1L], numeric(1))
   local_b <- vapply(blocks, function(block) block$local_shape[2L], numeric(1))
+  multi_gamma <- lapply(blocks, `[[`, "multi_gamma")
+  multi_pi_alpha <- lapply(blocks, `[[`, "multi_pi_alpha")
+  multi_var_shape <- vapply(blocks, `[[`, numeric(1), "multi_var_shape")
+  multi_var_scale <- vapply(blocks, `[[`, numeric(1), "multi_var_scale")
   sampler_arguments <- list(
     y = y,
     x = x,
@@ -172,11 +189,15 @@ blm <- function(y, ETA, residual_var = NULL,
     normal_scale = normal_scale,
     pi_alpha = pi_alpha,
     pi_beta = pi_beta,
-    slab_shape = slab_shape,
-    slab_scale = slab_scale,
+    spike_var_shape = spike_var_shape,
+    spike_var_scale = spike_var_scale,
     global_scale = global_scale,
     local_a = local_a,
     local_b = local_b,
+    multi_gamma = multi_gamma,
+    multi_pi_alpha = multi_pi_alpha,
+    multi_var_shape = multi_var_shape,
+    multi_var_scale = multi_var_scale,
     store_samples = store_samples,
     store_coefficient_cov = store_coefficient_cov
   )

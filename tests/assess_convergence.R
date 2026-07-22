@@ -15,7 +15,7 @@ diagnostic_eta <- list(
   ),
   selection = list(
     X = X[, "second", drop = FALSE], model = "SpikeSlab",
-    slab_shape = 2, slab_scale = 10
+    var_shape = 2, var_scale = 10
   ),
   shrinkage = list(
     X = X[, c("third", "fourth")], model = "GlobalLocal"

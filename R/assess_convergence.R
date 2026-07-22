@@ -5,6 +5,8 @@
 #' the intercept (when fitted) and residual variance; the shared coefficient variance for
 #' each normal block; the inclusion probability and slab variance for each
 #' spike-and-slab block; and the global variance for each global-local block.
+#' For each spike-and-multiple-slab block, they also include every mixture
+#' probability and the shared coefficient variance.
 #' All per-predictor quantities, including regression coefficients, local
 #' variances, and spike-and-slab inclusion indicators, are intentionally
 #' excluded.

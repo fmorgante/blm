@@ -69,11 +69,15 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     const Rcpp::NumericVector& normal_scale,
     const Rcpp::NumericVector& pi_alpha,
     const Rcpp::NumericVector& pi_beta,
-    const Rcpp::NumericVector& slab_shape,
-    const Rcpp::NumericVector& slab_scale,
+    const Rcpp::NumericVector& spike_var_shape,
+    const Rcpp::NumericVector& spike_var_scale,
     const Rcpp::NumericVector& global_scale,
     const Rcpp::NumericVector& local_a,
     const Rcpp::NumericVector& local_b,
+    const Rcpp::List& multi_gamma_list,
+    const Rcpp::List& multi_pi_alpha_list,
+    const Rcpp::NumericVector& multi_var_shape,
+    const Rcpp::NumericVector& multi_var_scale,
     const bool learn_residual_var,
     const double fixed_residual_var,
     const bool store_samples,
@@ -128,6 +132,9 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   Rcpp::NumericMatrix slab_var_samples(stored_rows, number_of_blocks);
   Rcpp::NumericMatrix local_var_samples(stored_rows, p);
   Rcpp::NumericMatrix tau_sq_samples(stored_rows, number_of_blocks);
+  Rcpp::IntegerMatrix multi_component_samples(stored_rows, p);
+  Rcpp::List multi_pi_samples(number_of_blocks);
+  Rcpp::NumericMatrix multi_var_samples(stored_rows, number_of_blocks);
   Rcpp::NumericVector coefficient_sum(p);
   Rcpp::NumericVector coefficient_sum_sq(p);
   const int covariance_dimension = store_coefficient_cov ? p : 0;
@@ -149,8 +156,15 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   Rcpp::NumericVector local_var_sum_sq(p);
   Rcpp::NumericVector tau_sq_sum(number_of_blocks);
   Rcpp::NumericVector tau_sq_sum_sq(number_of_blocks);
+  Rcpp::List multi_component_sum(number_of_blocks);
+  Rcpp::List multi_pi_sum(number_of_blocks);
+  Rcpp::List multi_pi_sum_sq(number_of_blocks);
+  Rcpp::NumericVector multi_var_sum(number_of_blocks);
+  Rcpp::NumericVector multi_var_sum_sq(number_of_blocks);
   std::vector<double> coefficient(p, 0.0);
   std::vector<int> inclusion(p, 1);
+  std::vector<int> multi_component(p, 0);
+  std::vector<int> multi_local_index(p, -1);
   std::vector<double> local_var(p, 1.0);
   std::vector<double> local_aux(p, 1.0);
   std::vector<double> residuals(n);
@@ -166,9 +180,14 @@ Rcpp::List blm_gibbs_rcpp_cpp(
   std::vector<double> slab_var(number_of_blocks, 1.0);
   std::vector<double> tau_sq(number_of_blocks, 1.0);
   std::vector<double> global_aux(number_of_blocks, 1.0);
+  std::vector<double> multi_var(number_of_blocks, 1.0);
+  std::vector< std::vector<double> > multi_gamma(number_of_blocks);
+  std::vector< std::vector<double> > multi_pi_alpha(number_of_blocks);
+  std::vector< std::vector<double> > multi_pi(number_of_blocks);
   bool has_normal = false;
   bool has_spike_slab = false;
   bool has_global_local = false;
+  bool has_spike_multi_slab = false;
   for (int block = 0; block < number_of_blocks; ++block) {
     if (block_model[block] == 0) {
       has_normal = true;
@@ -178,11 +197,53 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     if (block_model[block] == 1) {
       has_spike_slab = true;
       pi[block] = pi_alpha[block] / (pi_alpha[block] + pi_beta[block]);
-      slab_var[block] = slab_scale[block] / (slab_shape[block] + 1.0);
+      slab_var[block] =
+        spike_var_scale[block] / (spike_var_shape[block] + 1.0);
     }
     if (block_model[block] == 2) {
       has_global_local = true;
       tau_sq[block] = global_scale[block] * global_scale[block];
+    }
+    if (block_model[block] == 3) {
+      has_spike_multi_slab = true;
+      const Rcpp::NumericVector gamma_values = multi_gamma_list[block];
+      const Rcpp::NumericVector alpha_values = multi_pi_alpha_list[block];
+      multi_gamma[block] = Rcpp::as< std::vector<double> >(gamma_values);
+      multi_pi_alpha[block] =
+        Rcpp::as< std::vector<double> >(alpha_values);
+      multi_pi[block].resize(alpha_values.size());
+      double alpha_total = 0.0;
+      for (int component = 0; component < alpha_values.size(); ++component) {
+        alpha_total += alpha_values[component];
+      }
+      for (int component = 0; component < alpha_values.size(); ++component) {
+        multi_pi[block][component] = alpha_values[component] / alpha_total;
+      }
+      multi_var[block] =
+        multi_var_scale[block] / (multi_var_shape[block] + 1.0);
+      if (store_samples) {
+        multi_pi_samples[block] = Rcpp::NumericMatrix(
+          stored_rows, alpha_values.size()
+        );
+      } else {
+        int block_size = 0;
+        for (int j = 0; j < p; ++j) {
+          if (block_id[j] - 1 == block) {
+            multi_local_index[j] = block_size;
+            ++block_size;
+          }
+        }
+        multi_component_sum[block] = Rcpp::NumericMatrix(
+          block_size, alpha_values.size()
+        );
+        multi_pi_sum[block] = Rcpp::NumericVector(alpha_values.size());
+        multi_pi_sum_sq[block] = Rcpp::NumericVector(alpha_values.size());
+      }
+    } else {
+      multi_pi_samples[block] = R_NilValue;
+      multi_component_sum[block] = R_NilValue;
+      multi_pi_sum[block] = R_NilValue;
+      multi_pi_sum_sq[block] = R_NilValue;
     }
   }
   const double posterior_shape =
@@ -202,40 +263,95 @@ Rcpp::List blm_gibbs_rcpp_cpp(
         residuals[i] += x_centered(i, j) * coefficient[j];
         conditional_numerator += x_centered(i, j) * residuals[i];
       }
-      const double prior_precision = model == 2
-        ? 1.0 / tau_sq[block] / local_var[j]
-        : (model == 1 ? 1.0 / slab_var[block] : 1.0 / normal_var[block]);
-      const double conditional_var = 1.0 / (
-        x_squared[j] / residual_var + prior_precision
-      );
-      const double conditional_mean =
-        conditional_var * conditional_numerator / residual_var;
-      if (model == 1) {
-        const double epsilon = std::numeric_limits<double>::epsilon();
-        const double bounded_pi = std::min(
-          std::max(pi[block], epsilon),
-          1.0 - epsilon
-        );
-        const double log_inclusion_odds =
-          std::log(bounded_pi) - std::log1p(-bounded_pi) +
-          0.5 * std::log(conditional_var / slab_var[block]) +
-          conditional_mean * conditional_mean / (2.0 * conditional_var);
-        const double inclusion_probability =
-          log_inclusion_odds >= 0.0
-            ? 1.0 / (1.0 + std::exp(-log_inclusion_odds))
-            : std::exp(log_inclusion_odds) /
-                (1.0 + std::exp(log_inclusion_odds));
-        inclusion[j] = static_cast<int>(
-          R::rbinom(1.0, inclusion_probability)
-        );
-      }
-      if (model != 1 || inclusion[j] == 1) {
-        coefficient[j] = R::rnorm(
-          conditional_mean,
-          std::sqrt(conditional_var)
-        );
+      if (model == 3) {
+        const int component_count = multi_gamma[block].size();
+        std::vector<double> log_weights(component_count, 0.0);
+        std::vector<double> conditional_vars(component_count, 0.0);
+        std::vector<double> conditional_means(component_count, 0.0);
+        double maximum_log_weight = -std::numeric_limits<double>::infinity();
+        for (int component = 0; component < component_count; ++component) {
+          log_weights[component] = std::log(std::max(
+            multi_pi[block][component], std::numeric_limits<double>::min()
+          ));
+          if (component > 0) {
+            const double prior_var =
+              multi_gamma[block][component] * multi_var[block];
+            conditional_vars[component] = 1.0 / (
+              x_squared[j] / residual_var + 1.0 / prior_var
+            );
+            conditional_means[component] = conditional_vars[component] *
+              conditional_numerator / residual_var;
+            log_weights[component] +=
+              0.5 * std::log(conditional_vars[component] / prior_var) +
+              conditional_means[component] * conditional_means[component] /
+                (2.0 * conditional_vars[component]);
+          }
+          maximum_log_weight = std::max(
+            maximum_log_weight, log_weights[component]
+          );
+        }
+        double weight_total = 0.0;
+        for (int component = 0; component < component_count; ++component) {
+          log_weights[component] = std::exp(
+            log_weights[component] - maximum_log_weight
+          );
+          weight_total += log_weights[component];
+        }
+        const double threshold = R::runif(0.0, weight_total);
+        double cumulative_weight = 0.0;
+        int selected_component = component_count - 1;
+        for (int component = 0; component < component_count; ++component) {
+          cumulative_weight += log_weights[component];
+          if (threshold <= cumulative_weight) {
+            selected_component = component;
+            break;
+          }
+        }
+        multi_component[j] = selected_component;
+        coefficient[j] = selected_component == 0
+          ? 0.0
+          : R::rnorm(
+              conditional_means[selected_component],
+              std::sqrt(conditional_vars[selected_component])
+            );
       } else {
-        coefficient[j] = 0.0;
+        const double prior_precision = model == 2
+          ? 1.0 / tau_sq[block] / local_var[j]
+          : (model == 1
+              ? 1.0 / slab_var[block]
+              : 1.0 / normal_var[block]);
+        const double conditional_var = 1.0 / (
+          x_squared[j] / residual_var + prior_precision
+        );
+        const double conditional_mean =
+          conditional_var * conditional_numerator / residual_var;
+        if (model == 1) {
+          const double epsilon = std::numeric_limits<double>::epsilon();
+          const double bounded_pi = std::min(
+            std::max(pi[block], epsilon),
+            1.0 - epsilon
+          );
+          const double log_inclusion_odds =
+            std::log(bounded_pi) - std::log1p(-bounded_pi) +
+            0.5 * std::log(conditional_var / slab_var[block]) +
+            conditional_mean * conditional_mean / (2.0 * conditional_var);
+          const double inclusion_probability =
+            log_inclusion_odds >= 0.0
+              ? 1.0 / (1.0 + std::exp(-log_inclusion_odds))
+              : std::exp(log_inclusion_odds) /
+                  (1.0 + std::exp(log_inclusion_odds));
+          inclusion[j] = static_cast<int>(
+            R::rbinom(1.0, inclusion_probability)
+          );
+        }
+        if (model != 1 || inclusion[j] == 1) {
+          coefficient[j] = R::rnorm(
+            conditional_mean,
+            std::sqrt(conditional_var)
+          );
+        } else {
+          coefficient[j] = 0.0;
+        }
       }
       for (int i = 0; i < n; ++i) {
         residuals[i] -= x_centered(i, j) * coefficient[j];
@@ -286,10 +402,50 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           pi_beta[block] + block_size - number_included
         );
         const double slab_posterior_scale =
-          slab_scale[block] + 0.5 * included_sum_of_squares;
+          spike_var_scale[block] + 0.5 * included_sum_of_squares;
         slab_var[block] = 1.0 / R::rgamma(
-          slab_shape[block] + 0.5 * number_included,
+          spike_var_shape[block] + 0.5 * number_included,
           1.0 / slab_posterior_scale
+        );
+      }
+    }
+
+    if (has_spike_multi_slab) {
+      for (int block = 0; block < number_of_blocks; ++block) {
+        if (block_model[block] != 3) {
+          continue;
+        }
+        const int component_count = multi_gamma[block].size();
+        std::vector<int> counts(component_count, 0);
+        int number_nonzero = 0;
+        double scaled_sum_of_squares = 0.0;
+        for (int j = 0; j < p; ++j) {
+          if (block_id[j] - 1 != block) {
+            continue;
+          }
+          const int component = multi_component[j];
+          ++counts[component];
+          if (component > 0) {
+            ++number_nonzero;
+            scaled_sum_of_squares += coefficient[j] * coefficient[j] /
+              multi_gamma[block][component];
+          }
+        }
+        double pi_total = 0.0;
+        for (int component = 0; component < component_count; ++component) {
+          multi_pi[block][component] = R::rgamma(
+            multi_pi_alpha[block][component] + counts[component], 1.0
+          );
+          pi_total += multi_pi[block][component];
+        }
+        for (int component = 0; component < component_count; ++component) {
+          multi_pi[block][component] /= pi_total;
+        }
+        const double posterior_scale = multi_var_scale[block] +
+          0.5 * scaled_sum_of_squares;
+        multi_var[block] = 1.0 / R::rgamma(
+          multi_var_shape[block] + 0.5 * number_nonzero,
+          1.0 / posterior_scale
         );
       }
     }
@@ -368,6 +524,10 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           if (model == 2) {
             local_var_samples(retained_index, j) = local_var[j];
           }
+          if (model == 3) {
+            multi_component_samples(retained_index, j) =
+              multi_component[j] + 1;
+          }
         }
         intercept_mean -= intercept_x_mean[j] * coefficient[j];
       }
@@ -402,6 +562,21 @@ Rcpp::List blm_gibbs_rcpp_cpp(
             }
           }
         }
+        if (has_spike_multi_slab) {
+          for (int block = 0; block < number_of_blocks; ++block) {
+            if (block_model[block] != 3) {
+              continue;
+            }
+            Rcpp::NumericMatrix block_pi_samples = multi_pi_samples[block];
+            for (int component = 0;
+                 component < static_cast<int>(multi_pi[block].size());
+                 ++component) {
+              block_pi_samples(retained_index, component) =
+                multi_pi[block][component];
+            }
+            multi_var_samples(retained_index, block) = multi_var[block];
+          }
+        }
       } else {
         for (int j = 0; j < p; ++j) {
           coefficient_sum[j] += coefficient[j];
@@ -409,6 +584,14 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           inclusion_sum[j] += inclusion[j];
           local_var_sum[j] += local_var[j];
           local_var_sum_sq[j] += local_var[j] * local_var[j];
+          if (block_model[block_id[j] - 1] == 3) {
+            const int block = block_id[j] - 1;
+            Rcpp::NumericMatrix block_component_sum =
+              multi_component_sum[block];
+            block_component_sum(
+              multi_local_index[j], multi_component[j]
+            ) += 1.0;
+          }
           if (store_coefficient_cov) {
             for (int k = 0; k < p; ++k) {
               coefficient_crossprod(j, k) += coefficient[j] * coefficient[k];
@@ -428,6 +611,19 @@ Rcpp::List blm_gibbs_rcpp_cpp(
           slab_var_sum_sq[block] += slab_var[block] * slab_var[block];
           tau_sq_sum[block] += tau_sq[block];
           tau_sq_sum_sq[block] += tau_sq[block] * tau_sq[block];
+          if (block_model[block] == 3) {
+            Rcpp::NumericVector block_pi_sum = multi_pi_sum[block];
+            Rcpp::NumericVector block_pi_sum_sq = multi_pi_sum_sq[block];
+            for (int component = 0;
+                 component < static_cast<int>(multi_pi[block].size());
+                 ++component) {
+              block_pi_sum[component] += multi_pi[block][component];
+              block_pi_sum_sq[component] +=
+                multi_pi[block][component] * multi_pi[block][component];
+            }
+            multi_var_sum[block] += multi_var[block];
+            multi_var_sum_sq[block] += multi_var[block] * multi_var[block];
+          }
         }
       }
       ++retained_index;
@@ -470,7 +666,10 @@ Rcpp::List blm_gibbs_rcpp_cpp(
       Rcpp::Named("pi_samples") = pi_samples,
       Rcpp::Named("slab_var_samples") = slab_var_samples,
       Rcpp::Named("local_var_samples") = local_var_samples,
-      Rcpp::Named("tau_sq_samples") = tau_sq_samples
+      Rcpp::Named("tau_sq_samples") = tau_sq_samples,
+      Rcpp::Named("multi_component_samples") = multi_component_samples,
+      Rcpp::Named("multi_pi_samples") = multi_pi_samples,
+      Rcpp::Named("multi_var_samples") = multi_var_samples
     );
   }
   Rcpp::List summaries = Rcpp::List::create(
@@ -491,7 +690,12 @@ Rcpp::List blm_gibbs_rcpp_cpp(
     Rcpp::Named("local_var_sum") = local_var_sum,
     Rcpp::Named("local_var_sum_sq") = local_var_sum_sq,
     Rcpp::Named("tau_sq_sum") = tau_sq_sum,
-    Rcpp::Named("tau_sq_sum_sq") = tau_sq_sum_sq
+    Rcpp::Named("tau_sq_sum_sq") = tau_sq_sum_sq,
+    Rcpp::Named("multi_component_sum") = multi_component_sum,
+    Rcpp::Named("multi_pi_sum") = multi_pi_sum,
+    Rcpp::Named("multi_pi_sum_sq") = multi_pi_sum_sq,
+    Rcpp::Named("multi_var_sum") = multi_var_sum,
+    Rcpp::Named("multi_var_sum_sq") = multi_var_sum_sq
   );
   if (store_coefficient_cov) {
     summaries["coefficient_crossprod"] = coefficient_crossprod;

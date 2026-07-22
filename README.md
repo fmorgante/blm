@@ -1,7 +1,8 @@
 # BayesLinReg
 
 This R package implements Bayesian linear regression with independent normal,
-spike-and-slab, and beta-prime global-local priors on the regression
+spike-and-slab, BayesR-style spike-and-multiple-slab, and beta-prime
+global-local priors on the regression
 coefficients. The global-local family defaults to the Strawderman-Berger prior
 and includes the horseshoe as a special case. Multiple regression fits can
 combine multiple predictor blocks through a BGLR-style `ETA` interface. Each
@@ -95,10 +96,10 @@ otherwise `blm_ss()` fits a no-intercept model and warns. For multiple prior
 blocks, each `ETA` block uses `indices` to select a disjoint set of columns from
 `XtX`.
 
-The available models are `"Normal"`, `"SpikeSlab"`, and `"GlobalLocal"`.
+The available models are `"Normal"`, `"SpikeSlab"`, `"SpikeMultiSlab"`, and
+`"GlobalLocal"`.
 For every model, `residual_var` may be supplied as a fixed value or learned
 from `residual_shape` and `residual_scale`.
 For mixed priors, use a named `ETA` list whose blocks specify their own
 predictors, model, standardization, and prior parameters.
-
 

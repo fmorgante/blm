@@ -26,7 +26,8 @@ blm(
 
 \item{ETA}{A predictor specification or named list of predictor
 specifications. Each block must contain \code{X} and \code{model}. Available models
-are \code{"Normal"}, \code{"SpikeSlab"}, and \code{"GlobalLocal"}. See Details.}
+are \code{"Normal"}, \code{"SpikeSlab"}, \code{"GlobalLocal"}, and
+\code{"SpikeMultiSlab"}. See Details.}
 
 \item{residual_var}{A positive known residual variance, or \code{NULL} to learn
 it using an inverse-gamma prior.}
@@ -69,7 +70,10 @@ contains a named \code{coefficient_var} vector; \code{coefficient_cov} is includ
 when \code{store_coefficient_cov = TRUE}. When
 \code{store_samples = TRUE}, the corresponding posterior draws are also
 returned. With multiple chains, \code{chain_id} identifies the origin of each
-retained draw when samples are stored.
+retained draw when samples are stored. \code{SpikeMultiSlab} blocks additionally
+return per-predictor \code{component_probability} values, an
+\code{inclusion_probability} vector, and summaries of the mixture probabilities
+and shared variance.
 }
 \description{
 Fits a Bayesian linear regression with one or more predictor blocks using a
@@ -91,7 +95,7 @@ A \code{"Normal"} block optionally accepts \code{var_shape = 2} and
 \code{var_scale = 1}. Its coefficients share a variance sampled from an
 inverse-gamma prior with the supplied shape and scale.
 A \code{"SpikeSlab"} block optionally accepts \code{pi = c(a = 1, b = 1)},
-\code{slab_shape = 2}, and \code{slab_scale = 1}. Its shared slab variance has an
+\code{var_shape = 2}, and \code{var_scale = 1}. Its shared slab variance has an
 inverse-gamma prior with the supplied shape and scale. A \code{"GlobalLocal"}
 block optionally accepts
 \code{local_shape = c(a = 1, b = 0.5)} and \code{global_scale = 1}. Its hierarchy is
@@ -99,6 +103,15 @@ block optionally accepts
   \psi_j \sim \mathrm{BetaPrime}(a,b),}
 with \eqn{\tau \sim C^+(0,\mathrm{global\_scale})}. Thus the default is
 Strawderman-Berger, while \code{local_shape = c(0.5, 0.5)} gives the horseshoe.
+
+A \code{"SpikeMultiSlab"} block uses a BayesR-style mixture containing a point
+mass at zero followed by normal slabs. It optionally accepts
+\code{gamma = c(0, 0.01, 0.1, 1)}, a strictly increasing vector whose first
+element is zero; \code{alpha = rep(1, length(gamma))}, the Dirichlet prior
+concentrations for the component probabilities; and \code{var_shape = 2} and
+\code{var_scale = 1} for the inverse-gamma prior on the shared variance. Given
+component \eqn{c > 1}, the coefficient variance is
+\eqn{\gamma_c \sigma_\beta^2}.
 The coefficient priors are independent of the residual variance.
 }
 \examples{

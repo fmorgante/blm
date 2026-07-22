@@ -184,11 +184,15 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
   normal_scale <- vapply(blocks, `[[`, numeric(1), "normal_scale")
   pi_alpha <- vapply(blocks, `[[`, numeric(1), "pi_alpha")
   pi_beta <- vapply(blocks, `[[`, numeric(1), "pi_beta")
-  slab_shape <- vapply(blocks, `[[`, numeric(1), "slab_shape")
-  slab_scale <- vapply(blocks, `[[`, numeric(1), "slab_scale")
+  spike_var_shape <- vapply(blocks, `[[`, numeric(1), "spike_var_shape")
+  spike_var_scale <- vapply(blocks, `[[`, numeric(1), "spike_var_scale")
   global_scale <- vapply(blocks, `[[`, numeric(1), "global_scale")
   local_a <- vapply(blocks, function(block) block$local_shape[1L], numeric(1))
   local_b <- vapply(blocks, function(block) block$local_shape[2L], numeric(1))
+  multi_gamma <- lapply(blocks, `[[`, "multi_gamma")
+  multi_pi_alpha <- lapply(blocks, `[[`, "multi_pi_alpha")
+  multi_var_shape <- vapply(blocks, `[[`, numeric(1), "multi_var_shape")
+  multi_var_scale <- vapply(blocks, `[[`, numeric(1), "multi_var_scale")
   sampler_arguments <- list(
     y = pseudo$y,
     x = pseudo$x,
@@ -204,11 +208,15 @@ blm_ss <- function(n, XtX, Xty, ETA, yty = NULL, X_means = NULL,
     normal_scale = normal_scale,
     pi_alpha = pi_alpha,
     pi_beta = pi_beta,
-    slab_shape = slab_shape,
-    slab_scale = slab_scale,
+    spike_var_shape = spike_var_shape,
+    spike_var_scale = spike_var_scale,
     global_scale = global_scale,
     local_a = local_a,
     local_b = local_b,
+    multi_gamma = multi_gamma,
+    multi_pi_alpha = multi_pi_alpha,
+    multi_var_shape = multi_var_shape,
+    multi_var_scale = multi_var_scale,
     store_samples = store_samples,
     store_coefficient_cov = store_coefficient_cov,
     effective_n = n,

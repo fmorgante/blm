@@ -7,7 +7,8 @@
 \title{BayesLinReg package}
 \description{
 Bayesian linear regression from raw observations or sufficient statistics,
-with normal, spike-and-slab, and global-local coefficient priors.
+with normal, spike-and-slab, spike-and-multiple-slab, and global-local
+coefficient priors.
 }
 \seealso{
 Useful links:

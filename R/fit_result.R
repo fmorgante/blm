@@ -97,8 +97,8 @@
         )
       }
       result$pi <- c(a = block$pi_alpha, b = block$pi_beta)
-      result$slab_shape <- block$slab_shape
-      result$slab_scale <- block$slab_scale
+      result$var_shape <- block$spike_var_shape
+      result$var_scale <- block$spike_var_scale
     }
     if (block$model == "GlobalLocal") {
       if (store_samples) {
@@ -131,6 +131,63 @@
       }
       result$local_shape <- block$local_shape
       result$global_scale <- block$global_scale
+    }
+    if (block$model == "SpikeMultiSlab") {
+      component_names <- c(
+        "spike", paste0("slab_", seq_len(length(block$multi_gamma) - 1L))
+      )
+      if (store_samples) {
+        component_samples <-
+          samples$multi_component_samples[, indices, drop = FALSE]
+        colnames(component_samples) <- block$predictor_names
+        component_probability <- vapply(
+          seq_along(block$multi_gamma),
+          function(component) colMeans(component_samples == component),
+          numeric(length(indices))
+        )
+        dimnames(component_probability) <- list(
+          block$predictor_names, component_names
+        )
+        multi_pi_samples <- samples$multi_pi_samples[[block_index]]
+        colnames(multi_pi_samples) <- component_names
+        multi_var_samples <- samples$multi_var_samples[, block_index]
+        result$component_samples <- component_samples
+        result$pi_samples <- multi_pi_samples
+        result$var_samples <- multi_var_samples
+        result$pi_mean <- colMeans(multi_pi_samples)
+        result$pi_var <- apply(multi_pi_samples, 2L, stats::var)
+        result$var_mean <- mean(multi_var_samples)
+        result$var_var <- stats::var(multi_var_samples)
+      } else {
+        component_probability <-
+          samples$multi_component_sum[[block_index]] /
+            samples$number_of_draws
+        dimnames(component_probability) <- list(
+          block$predictor_names, component_names
+        )
+        result$pi_mean <- samples$multi_pi_sum[[block_index]] /
+          samples$number_of_draws
+        result$pi_var <- vapply(seq_along(block$multi_gamma), function(index) {
+          .variance_from_sums(
+            samples$multi_pi_sum[[block_index]][index],
+            samples$multi_pi_sum_sq[[block_index]][index],
+            samples$number_of_draws
+          )
+        }, numeric(1))
+        names(result$pi_mean) <- names(result$pi_var) <- component_names
+        result$var_mean <- samples$multi_var_sum[block_index] /
+          samples$number_of_draws
+        result$var_var <- .variance_from_sums(
+          samples$multi_var_sum[block_index],
+          samples$multi_var_sum_sq[block_index], samples$number_of_draws
+        )
+      }
+      result$component_probability <- component_probability
+      result$inclusion_probability <- 1 - component_probability[, "spike"]
+      result$gamma <- stats::setNames(block$multi_gamma, component_names)
+      result$alpha <- stats::setNames(block$multi_pi_alpha, component_names)
+      result$var_shape <- block$multi_var_shape
+      result$var_scale <- block$multi_var_scale
     }
     result
   })

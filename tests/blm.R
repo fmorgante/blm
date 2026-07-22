@@ -189,8 +189,8 @@ multi_eta <- list(
   selection = list(
     X = multi_X[, c("nuisance", "noise1")],
     model = "SpikeSlab",
-    slab_shape = 2,
-    slab_scale = 10,
+    var_shape = 2,
+    var_scale = 10,
     pi = c(a = 1, b = 2)
   ),
   shrinkage = list(
@@ -236,8 +236,8 @@ stopifnot(
   identical(dim(multi_rcpp$ETA$shrinkage$local_var_samples), c(400L, 1L)),
   length(multi_rcpp$ETA$shrinkage$tau_sq_samples) == 400L,
   identical(multi_rcpp$ETA$selection$pi, c(a = 1, b = 2)),
-  identical(multi_rcpp$ETA$selection$slab_shape, 2),
-  identical(multi_rcpp$ETA$selection$slab_scale, 10),
+  identical(multi_rcpp$ETA$selection$var_shape, 2),
+  identical(multi_rcpp$ETA$selection$var_scale, 10),
   identical(multi_rcpp$ETA$shrinkage$global_scale, 0.5),
   abs(multi_rcpp$ETA$fixed$coefficient_mean["signal"] - 2.5) < 0.1,
   max(abs(
@@ -396,8 +396,8 @@ spike_fit <- blm(
   ETA = list(
     X = multi_X[, c("signal", "noise1")],
     model = "SpikeSlab",
-    slab_shape = 3,
-    slab_scale = 4,
+    var_shape = 3,
+    var_scale = 4,
     pi = c(a = 1, b = 2)
   ),
   residual_shape = 2,
@@ -409,8 +409,8 @@ spike_fit <- blm(
 stopifnot(
   identical(spike_fit$ETA$ETA1$model, "SpikeSlab"),
   identical(spike_fit$ETA$ETA1$pi, c(a = 1, b = 2)),
-  identical(spike_fit$ETA$ETA1$slab_shape, 3),
-  identical(spike_fit$ETA$ETA1$slab_scale, 4),
+  identical(spike_fit$ETA$ETA1$var_shape, 3),
+  identical(spike_fit$ETA$ETA1$var_scale, 4),
   all(spike_fit$ETA$ETA1$slab_var_samples > 0),
   identical(
     spike_fit$ETA$ETA1$slab_var_mean,
@@ -425,8 +425,8 @@ fixed_spike_rcpp <- blm(
   ETA = list(
     X = multi_X[, c("signal", "noise1")],
     model = "SpikeSlab",
-    slab_shape = 3,
-    slab_scale = 4,
+    var_shape = 3,
+    var_scale = 4,
     pi = c(a = 1, b = 2)
   ),
   residual_var = 0.25,
@@ -440,8 +440,8 @@ fixed_spike_r <- blm(
   ETA = list(
     X = multi_X[, c("signal", "noise1")],
     model = "SpikeSlab",
-    slab_shape = 3,
-    slab_scale = 4,
+    var_shape = 3,
+    var_scale = 4,
     pi = c(a = 1, b = 2)
   ),
   residual_var = 0.25,
@@ -627,13 +627,13 @@ invalid_calls <- list(
   ),
   function() blm(
     y,
-    ETA = list(X = x, model = "SpikeSlab", slab_shape = 0),
+    ETA = list(X = x, model = "SpikeSlab", var_shape = 0),
     residual_shape = 2,
     residual_scale = 1
   ),
   function() blm(
     y,
-    ETA = list(X = x, model = "SpikeSlab", slab_scale = 0),
+    ETA = list(X = x, model = "SpikeSlab", var_scale = 0),
     residual_shape = 2,
     residual_scale = 1
   ),
